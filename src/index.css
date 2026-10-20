@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background-color: #f3f4f6;
+  /* Evita que el usuario haga zoom en la app simulando un celular */
+  user-select: none; 
+}
