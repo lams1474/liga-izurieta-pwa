@@ -1,12 +1,28 @@
 import Dexie from 'dexie';
 
-// Creamos la base de datos local en el celular
-export const db = new Dexie('LigaIzurietaDB');
+export const db = new Dexie('LigaIzurietaPWA');
 
-// Definimos las tablas (solo guardaremos los partidos asignados)
+// Versión 1
 db.version(1).stores({
-  partidos: 'id, fecha_id, hora, equipo_local_id, equipo_visitante_id, jugado', // Partidos descargados
-  jugadores: 'id, equipo_id, apellidos, nombres, cedula, foto_url, estado_carnet, motivos_bloqueo', // Jugadores de esos equipos
-  eventos: '++id, partido_id, tipo, jugador_id, equipo_id, minuto, sync_status', // Goles y tarjetas guardados offline
-  syncQueue: '++id, action, data' // Cola de cosas por subir a la nube
+  partidos: 'id, fecha_id, arbitro_id, vocal_id, jugado',
+  equipos: 'id, nombre',
+  jugadores: 'id, cedula, apellidos',
+  planilla: 'id, partido_id, equipo_id, jugador_id',
+  carnets: 'id, jugador_id, valido',
+  sanciones: 'id, jugador_id, partido_id, etapa_id',
+  eventos: '++id, partido_id, tipo, jugador_id, sync_status',
+  syncQueue: '++id, action, data, tabla, creado_en'
+});
+
+// Versión 2 (Agregamos la tabla firmas)
+db.version(2).stores({
+  partidos: 'id, fecha_id, arbitro_id, vocal_id, jugado',
+  equipos: 'id, nombre',
+  jugadores: 'id, cedula, apellidos',
+  planilla: 'id, partido_id, equipo_id, jugador_id',
+  carnets: 'id, jugador_id, valido',
+  sanciones: 'id, jugador_id, partido_id, etapa_id',
+  eventos: '++id, partido_id, tipo, jugador_id, sync_status',
+  syncQueue: '++id, action, data, tabla, creado_en',
+  firmas: '++id, partido_id, tipo_firmante'
 });
