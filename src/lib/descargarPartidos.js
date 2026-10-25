@@ -15,7 +15,6 @@ export async function descargarMisPartidos() {
   const orFilters = [`vocal_id.eq.${user.id}`]
   if (arbitroRow?.id) orFilters.push(`arbitro_id.eq.${arbitroRow.id}`)
 
-  // 1. Traer los partidos actuales de Supabase
   const { data: partidos, error: errPartidos } = await supabase
     .from('partidos')
     .select(`
@@ -27,7 +26,7 @@ export async function descargarMisPartidos() {
 
   if (errPartidos) throw errPartidos
 
-  // 2. NUEVA LÓGICA: Limpiar partidos viejos en Dexie que ya no están en Supabase
+  // Limpiar partidos viejos en Dexie
   const partidosLocales = await db.partidos.toArray()
   const partidosNubeIds = (partidos || []).map(p => p.id)
   const partidosABorrar = partidosLocales.filter(p => !partidosNubeIds.includes(p.id))
@@ -40,15 +39,10 @@ export async function descargarMisPartidos() {
         await db.eventos.where('partido_id').equals(p.id).delete()
       }
     })
-    console.log(`Se eliminaron ${partidosABorrar.length} partidos que ya no existen en la nube.`)
   }
 
-  if (!partidos || partidos.length === 0) {
-    return { partidos: 0, jugadores: 0, equipos: 0, planilla: 0, carnets: 0 }
-  }
+  if (!partidos || partidos.length === 0) return { partidos: 0, jugadores: 0, equipos: 0, planilla: 0, carnets: 0 }
 
-  // ... El resto de tu código para descargar equipos, planilla, jugadores, etc. se mantiene igual ...
-  
   const partidoIds = partidos.map(p => p.id)
   const equipoIds = [...new Set(partidos.flatMap(p => [p.equipo_local_id, p.equipo_visitante_id]))]
 
@@ -59,7 +53,20 @@ export async function descargarMisPartidos() {
   const idsToFetch = jugadorIds.length ? jugadorIds : ['00000000-0000-0000-0000-000000000000']
 
   const { data: jugadores } = await supabase.from('jugadores').select('id, nombres, apellidos, cedula, foto_url, fecha_nacimiento, es_menor').in('id', idsToFetch)
-  const { data: carnets } = await supabase.from('carnets').select('id, jugador_id, equipo_id, valido, motivo_bloqueo').in('jugador_id', idsToFetch)
+  
+  // AQUÍ ESTÁ EL CAMBIO CLAVE: Evaluar jugador por jugador con la misma regla del Admin
+  const carnetsReales = []
+  for (const je of (jugadorEquipo || [])) {
+    const { data: val } = await supabase.rpc('validar_carnet', { p_jugador_id: je.jugador_id, p_equipo_id: je.equipo_id })
+    
+    carnetsReales.push({
+      jugador_id: je.jugador_id,
+      equipo_id: je.equipo_id,
+      valido: val?.[0]?.estado === 'HABILITADO',
+      motivo_bloqueo: val?.[0]?.motivos?.join(', ') || ''
+    })
+  }
+
   const { data: sanciones } = await supabase.from('sanciones_jugador').select('id, jugador_id, partido_id, etapa_id, tipo, fechas_sancion, fechas_cumplidas, activa').in('jugador_id', idsToFetch).eq('activa', true)
   
   const { data: planillaAdmin } = await supabase.from('planilla_partido').select('id, partido_id, equipo_id, jugador_id, es_titular, dorsal').in('partido_id', partidoIds)
@@ -87,7 +94,7 @@ export async function descargarMisPartidos() {
     await db.equipos.bulkPut(equipos || [])
     await db.jugadores.bulkPut(jugadores || [])
     await db.planilla.bulkPut(planillaLocal)
-    await db.carnets.bulkPut(carnets || [])
+    await db.carnets.bulkPut(carnetsReales) // <-- Guardamos el estado real
     await db.sanciones.bulkPut(sanciones || [])
   })
 
@@ -96,6 +103,6 @@ export async function descargarMisPartidos() {
     equipos: equipos?.length || 0,
     jugadores: jugadores?.length || 0,
     planilla: planillaLocal.length,
-    carnets: carnets?.length || 0
+    carnets: carnetsReales.length
   }
 }
