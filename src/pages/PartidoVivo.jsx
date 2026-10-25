@@ -34,7 +34,6 @@ export default function PartidoVivo() {
   const [firmasTemporales, setFirmasTemporales] = useState([])
   const [novedadesGenerales, setNovedadesGenerales] = useState('')
 
-  // Función nativa para imprimir/guardar PDF
   const handlePrint = () => {
     window.print()
   }
@@ -243,127 +242,130 @@ export default function PartidoVivo() {
   }
 
   return (
-    // 1. Aquí envolvemos todo lo visual con print:hidden
-    <div className="min-h-screen bg-gray-100 pb-20 print:hidden">
-      <header className="bg-liga-azul text-white p-4 flex items-center gap-3 sticky top-0 z-10 shadow-md">
-        <button onClick={() => navigate('/partidos')} className="p-2 bg-white/10 rounded-md hover:bg-white/20">
-          <ArrowLeft size={20} />
-        </button>
-        <div>
-          <h1 className="font-bold">Partido en Vivo</h1>
-          <p className="text-xs text-liga-amarillo capitalize">Sesión: {rolUsuario}</p>
-        </div>
-      </header>
-
-      <main className="max-w-4xl mx-auto p-4 space-y-4">
-        <div className="bg-white rounded-lg shadow-md p-4 text-center">
-          <div className="flex justify-between items-center text-gray-500 text-sm mb-2 px-4">
-            <span className="flex items-center gap-1"><Clock size={14}/> {partido.hora?.slice(0,5)}</span>
-            <span className="flex items-center gap-1"><MapPin size={14}/> {partido.cancha}</span>
-          </div>
-          <div className="flex justify-between items-center mt-4">
-            <div className="flex-1 text-right pr-4"><p className="text-lg font-bold text-gray-800 leading-tight">{equipoLocal?.nombre}</p></div>
-            <div className="bg-gray-800 px-6 py-3 rounded-lg text-4xl font-black text-white shadow-inner">{golesLocal} - {golesVisitante}</div>
-            <div className="flex-1 text-left pl-4"><p className="text-lg font-bold text-gray-800 leading-tight">{equipoVisitante?.nombre}</p></div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-lg shadow-md overflow-hidden">
-            <div className="bg-liga-azul text-white p-3 flex justify-between items-center">
-              <h3 className="font-bold flex items-center gap-2"><Shield size={18} /> {equipoLocal?.nombre}</h3>
-            </div>
-            <div className="divide-y divide-gray-100">{jugadoresLocal.map(j => renderJugador(j, partido.equipo_local_id))}</div>
-          </div>
-          
-          <div className="bg-white rounded-lg shadow-md overflow-hidden">
-            <div className="bg-gray-800 text-white p-3 flex justify-between items-center">
-              <h3 className="font-bold flex items-center gap-2"><Shield size={18} /> {equipoVisitante?.nombre}</h3>
-            </div>
-            <div className="divide-y divide-gray-100">{jugadoresVisitante.map(j => renderJugador(j, partido.equipo_visitante_id))}</div>
-          </div>
-        </div>
-
-        <div className="mt-8">
-          <button 
-            onClick={iniciarCierre} 
-            disabled={finalizando || partido.jugado} 
-            className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 ${partido.jugado ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-liga-rojo text-white hover:bg-red-700'}`}
-          >
-            {finalizando ? 'Procesando...' : partido.jugado ? 'Acta Finalizada' : 'Finalizar Partido y Firmar Acta'}
+    <>
+      {/* 1. TODO EL DISEÑO DE LA APP VA AQUÍ (Oculto al imprimir) */}
+      <div className="min-h-screen bg-gray-100 pb-20 print:hidden">
+        <header className="bg-liga-azul text-white p-4 flex items-center gap-3 sticky top-0 z-10 shadow-md">
+          <button onClick={() => navigate('/partidos')} className="p-2 bg-white/10 rounded-md hover:bg-white/20">
+            <ArrowLeft size={20} />
           </button>
+          <div>
+            <h1 className="font-bold">Partido en Vivo</h1>
+            <p className="text-xs text-liga-amarillo capitalize">Sesión: {rolUsuario}</p>
+          </div>
+        </header>
 
-          {partido.jugado && (
-            <button
-              onClick={handlePrint}
-              className="w-full mt-3 py-4 rounded-xl font-bold text-lg shadow-lg bg-gray-800 text-white hover:bg-black transition-colors flex items-center justify-center gap-2"
-            >
-              <Printer size={20} /> Descargar / Imprimir Acta PDF
-            </button>
-          )}
-        </div>
-      </main>
-
-      {jugadorSeleccionado && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center">
-          <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl p-5 animate-in slide-in-from-bottom-5">
-            <div className="flex justify-between items-center mb-4 pb-2 border-b">
-              <div>
-                <h3 className="font-bold text-gray-800 text-lg">{jugadorSeleccionado.jugador.apellidos}</h3>
-                <p className="text-sm text-gray-500">{jugadorSeleccionado.jugador.nombres}</p>
-                {!jugadorSeleccionado.habilitado && <p className="text-xs text-red-600 font-bold mt-1">BLOQUEADO: {jugadorSeleccionado.motivo}</p>}
-              </div>
-              <button onClick={() => setJugadorSeleccionado(null)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={20} /></button>
+        <main className="max-w-4xl mx-auto p-4 space-y-4">
+          <div className="bg-white rounded-lg shadow-md p-4 text-center">
+            <div className="flex justify-between items-center text-gray-500 text-sm mb-2 px-4">
+              <span className="flex items-center gap-1"><Clock size={14}/> {partido.hora?.slice(0,5)}</span>
+              <span className="flex items-center gap-1"><MapPin size={14}/> {partido.cancha}</span>
             </div>
+            <div className="flex justify-between items-center mt-4">
+              <div className="flex-1 text-right pr-4"><p className="text-lg font-bold text-gray-800 leading-tight">{equipoLocal?.nombre}</p></div>
+              <div className="bg-gray-800 px-6 py-3 rounded-lg text-4xl font-black text-white shadow-inner">{golesLocal} - {golesVisitante}</div>
+              <div className="flex-1 text-left pl-4"><p className="text-lg font-bold text-gray-800 leading-tight">{equipoVisitante?.nombre}</p></div>
+            </div>
+          </div>
 
-            {rolUsuario === 'vocal' && (
-              <div className="mb-4">
-                <button 
-                  onClick={() => toggleTitular(jugadorSeleccionado.jugador.id, jugadorSeleccionado.equipoId)}
-                  disabled={!jugadorSeleccionado.habilitado}
-                  className={`w-full py-2 rounded-lg font-bold border-2 flex items-center justify-center gap-2 ${
-                    !jugadorSeleccionado.habilitado ? 'bg-gray-200 border-gray-300 text-gray-400 cursor-not-allowed' :
-                    esTitular(jugadorSeleccionado.jugador.id, jugadorSeleccionado.equipoId) ? 'bg-green-50 border-green-600 text-green-700' : 'bg-gray-50 border-gray-300 text-gray-600'
-                  }`}
-                >
-                  <CheckCircle size={18} /> 
-                  {esTitular(jugadorSeleccionado.jugador.id, jugadorSeleccionado.equipoId) ? 'Es Titular (Quitar)' : 'Marcar como Titular'}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+              <div className="bg-liga-azul text-white p-3 flex justify-between items-center">
+                <h3 className="font-bold flex items-center gap-2"><Shield size={18} /> {equipoLocal?.nombre}</h3>
+              </div>
+              <div className="divide-y divide-gray-100">{jugadoresLocal.map(j => renderJugador(j, partido.equipo_local_id))}</div>
+            </div>
+            
+            <div className="bg-white rounded-lg shadow-md overflow-hidden">
+              <div className="bg-gray-800 text-white p-3 flex justify-between items-center">
+                <h3 className="font-bold flex items-center gap-2"><Shield size={18} /> {equipoVisitante?.nombre}</h3>
+              </div>
+              <div className="divide-y divide-gray-100">{jugadoresVisitante.map(j => renderJugador(j, partido.equipo_visitante_id))}</div>
+            </div>
+          </div>
+
+          <div className="mt-8">
+            <button 
+              onClick={iniciarCierre} 
+              disabled={finalizando || partido.jugado} 
+              className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 ${partido.jugado ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-liga-rojo text-white hover:bg-red-700'}`}
+            >
+              {finalizando ? 'Procesando...' : partido.jugado ? 'Acta Finalizada' : 'Finalizar Partido y Firmar Acta'}
+            </button>
+
+            {partido.jugado && (
+              <button
+                onClick={handlePrint}
+                className="w-full mt-3 py-4 rounded-xl font-bold text-lg shadow-lg bg-gray-800 text-white hover:bg-black transition-colors flex items-center justify-center gap-2"
+              >
+                <Printer size={20} /> Descargar / Imprimir Acta PDF
+              </button>
+            )}
+          </div>
+        </main>
+
+        {jugadorSeleccionado && (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center">
+            {/* MODAL DE ACCIONES... */}
+            <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl p-5 animate-in slide-in-from-bottom-5">
+              <div className="flex justify-between items-center mb-4 pb-2 border-b">
+                <div>
+                  <h3 className="font-bold text-gray-800 text-lg">{jugadorSeleccionado.jugador.apellidos}</h3>
+                  <p className="text-sm text-gray-500">{jugadorSeleccionado.jugador.nombres}</p>
+                  {!jugadorSeleccionado.habilitado && <p className="text-xs text-red-600 font-bold mt-1">BLOQUEADO: {jugadorSeleccionado.motivo}</p>}
+                </div>
+                <button onClick={() => setJugadorSeleccionado(null)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={20} /></button>
+              </div>
+
+              {rolUsuario === 'vocal' && (
+                <div className="mb-4">
+                  <button 
+                    onClick={() => toggleTitular(jugadorSeleccionado.jugador.id, jugadorSeleccionado.equipoId)}
+                    disabled={!jugadorSeleccionado.habilitado}
+                    className={`w-full py-2 rounded-lg font-bold border-2 flex items-center justify-center gap-2 ${
+                      !jugadorSeleccionado.habilitado ? 'bg-gray-200 border-gray-300 text-gray-400 cursor-not-allowed' :
+                      esTitular(jugadorSeleccionado.jugador.id, jugadorSeleccionado.equipoId) ? 'bg-green-50 border-green-600 text-green-700' : 'bg-gray-50 border-gray-300 text-gray-600'
+                    }`}
+                  >
+                    <CheckCircle size={18} /> 
+                    {esTitular(jugadorSeleccionado.jugador.id, jugadorSeleccionado.equipoId) ? 'Es Titular (Quitar)' : 'Marcar como Titular'}
+                  </button>
+                </div>
+              )}
+
+              {rolUsuario === 'arbitro' && (
+                 <div className="mb-4 text-center text-xs text-gray-500 bg-blue-50 p-2 rounded">
+                   La planilla es controlada por el Vocal.
+                 </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-2 pt-2 border-t">
+                <p className="text-xs text-center text-gray-500 mb-1">Registrar Evento:</p>
+                <button onClick={() => registrarEvento('gol')} disabled={!jugadorSeleccionado.habilitado} className="bg-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+                  <Circle size={20} className="fill-white" /> ¡GOL!
+                </button>
+                <button onClick={() => registrarEvento('amarilla')} disabled={!jugadorSeleccionado.habilitado} className="bg-yellow-400 text-yellow-900 py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+                  <div className="w-4 h-5 bg-yellow-900 rounded-sm"></div> Tarjeta Amarilla
+                </button>
+                <button onClick={() => registrarEvento('roja')} disabled={!jugadorSeleccionado.habilitado} className="bg-red-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+                  <div className="w-4 h-5 bg-white rounded-sm"></div> Tarjeta Roja
                 </button>
               </div>
-            )}
-
-            {rolUsuario === 'arbitro' && (
-               <div className="mb-4 text-center text-xs text-gray-500 bg-blue-50 p-2 rounded">
-                 La planilla es controlada por el Vocal.
-               </div>
-            )}
-
-            <div className="grid grid-cols-1 gap-2 pt-2 border-t">
-              <p className="text-xs text-center text-gray-500 mb-1">Registrar Evento:</p>
-              <button onClick={() => registrarEvento('gol')} disabled={!jugadorSeleccionado.habilitado} className="bg-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-                <Circle size={20} className="fill-white" /> ¡GOL!
-              </button>
-              <button onClick={() => registrarEvento('amarilla')} disabled={!jugadorSeleccionado.habilitado} className="bg-yellow-400 text-yellow-900 py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-                <div className="w-4 h-5 bg-yellow-900 rounded-sm"></div> Tarjeta Amarilla
-              </button>
-              <button onClick={() => registrarEvento('roja')} disabled={!jugadorSeleccionado.habilitado} className="bg-red-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-                <div className="w-4 h-5 bg-white rounded-sm"></div> Tarjeta Roja
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      <FirmaModal 
-        key={pasoFirma} 
-        isOpen={!!pasoFirma} 
-        onClose={() => setPasoFirma(null)} 
-        onSave={handleGuardarFirma} 
-        tipoFirmante={pasoFirma}
-        titulo={pasoFirma === 'local' ? `Capitán ${equipoLocal?.nombre}` : pasoFirma === 'visitante' ? `Capitán ${equipoVisitante?.nombre}` : pasoFirma === 'vocal' ? 'Firma del Vocal' : 'Firma del Árbitro'}
-      />
+        <FirmaModal 
+          key={pasoFirma} 
+          isOpen={!!pasoFirma} 
+          onClose={() => setPasoFirma(null)} 
+          onSave={handleGuardarFirma} 
+          tipoFirmante={pasoFirma}
+          titulo={pasoFirma === 'local' ? `Capitán ${equipoLocal?.nombre}` : pasoFirma === 'visitante' ? `Capitán ${equipoVisitante?.nombre}` : pasoFirma === 'vocal' ? 'Firma del Vocal' : 'Firma del Árbitro'}
+        />
+      </div>
 
-      {/* 2. El ActaPrintView va fuera del "print:hidden", al final del return */}
+      {/* 2. EL COMPONENTE DEL PDF VA FUERA DEL PRINT:HIDDEN, AQUÍ SE IMPRIMIRÁ */}
       <ActaPrintView 
         partido={partido}
         equipoLocal={equipoLocal}
@@ -373,6 +375,6 @@ export default function PartidoVivo() {
         eventos={eventos}
         firmas={firmas}
       />
-    </div>
+    </>
   )
 }
