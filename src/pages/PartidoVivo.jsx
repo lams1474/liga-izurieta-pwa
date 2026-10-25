@@ -343,7 +343,7 @@ export default function PartidoVivo() {
       />
 
       {/* COMPONENTE OCULTO PARA GENERAR EL PDF */}
-      <div className="hidden">
+      <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
         <ActaPrintView 
           ref={componentRef}
           partido={partido}
