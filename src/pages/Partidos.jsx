@@ -4,7 +4,7 @@ import { db } from '../lib/db'
 import { descargarMisPartidos } from '../lib/descargarPartidos'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { LogOut, Calendar, Download, Wifi, WifiOff, MapPin, Clock } from 'lucide-react'
+import { LogOut, Calendar, Download, Wifi, WifiOff, MapPin, Clock, Trash2 } from 'lucide-react'
 
 export default function Partidos() {
   const navigate = useNavigate()
@@ -41,15 +41,36 @@ export default function Partidos() {
         toast.error('No tienes partidos pendientes asignados')
       } else {
         toast.success(`Descargados ${resumen.partidos} partidos y ${resumen.jugadores} jugadores`)
-        // Volver a cargar la lista desde Dexie para mostrar en pantalla
-        const locales = await db.partidos.toArray()
-        setPartidosLocales(locales)
       }
+      
+      // Volver a cargar la lista desde Dexie para mostrar en pantalla
+      const locales = await db.partidos.toArray()
+      setPartidosLocales(locales)
+
     } catch (err) {
       console.error(err)
       toast.error(err.message || 'Error al descargar partidos')
     } finally {
       setDescargando(false)
+    }
+  }
+
+  // 4. Función para limpiar la memoria del celular (en caso de emergencia)
+  async function limpiarMemoria() {
+    if (!window.confirm("¿Seguro que deseas borrar todos los datos locales del celular? Tendrás que volver a descargar los partidos.")) return
+    
+    try {
+      // Limpiamos las tablas principales y las relacionadas
+      await db.partidos.clear()
+      await db.planilla.clear()
+      await db.eventos.clear()
+      await db.firmas.clear()
+      
+      setPartidosLocales([])
+      toast.success('Memoria limpiada correctamente')
+    } catch (err) {
+      console.error(err)
+      toast.error('Error al limpiar la memoria')
     }
   }
 
@@ -90,6 +111,16 @@ export default function Partidos() {
           {descargando ? 'Descargando datos...' : 'Descargar partidos offline'}
         </button>
 
+        {/* Botón de Limpiar Memoria (Utilidad para pruebas) */}
+        <div className="text-center pb-2">
+          <button 
+            onClick={limpiarMemoria}
+            className="text-xs text-gray-500 hover:text-liga-rojo flex items-center justify-center gap-1 mx-auto underline transition-colors"
+          >
+            <Trash2 size={12} /> Borrar datos locales del celular
+          </button>
+        </div>
+
         {/* Lista de Partidos */}
         {partidosLocales.length === 0 ? (
           <div className="bg-white p-8 rounded-lg shadow-md text-center">
@@ -101,7 +132,7 @@ export default function Partidos() {
           </div>
         ) : (
           <>
-            <p className="text-sm text-gray-500 text-center font-semibold">
+            <p className="text-sm text-gray-500 text-center font-semibold mb-2">
               {partidosLocales.length} partido(s) guardado(s) en este celular
             </p>
             
