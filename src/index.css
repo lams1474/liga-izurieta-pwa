@@ -9,3 +9,15 @@ body {
   /* Evita que el usuario haga zoom en la app simulando un celular */
   user-select: none; 
 }
+
+@media print {
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    background-color: white !important;
+  }
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { db } from '../lib/db'
 import { supabase } from '../lib/supabase'
@@ -6,33 +6,11 @@ import toast from 'react-hot-toast'
 import { ArrowLeft, Clock, MapPin, Shield, User, X, Circle, CheckCircle, Lock, Printer } from 'lucide-react'
 import { sincronizarPartido } from '../lib/sincronizarPartido'
 import FirmaModal from '../components/FirmaModal'
-import { useReactToPrint } from 'react-to-print'
 import ActaPrintView from '../components/ActaPrintView'
 
 export default function PartidoVivo() {
   const { id } = useParams()
   const navigate = useNavigate()
-  
-  // 1. Declaramos la referencia (ESTO FALTABA)
-  const componentRef = useRef()
-
-  // 2. Configuramos la impresión
-  const handlePrint = useReactToPrint({
-    contentRef: componentRef,
-    documentTitle: 'Acta_Partido_Liga',
-    onBeforePrint: () => toast.loading('Generando PDF...', { id: 'pdf' }),
-    onAfterPrint: () => toast.success('PDF Generado', { id: 'pdf' }),
-    onPrintError: (errorLocation, error) => {
-      console.error(errorLocation, error);
-      toast.error('Error al generar el PDF. Revisa la consola.', { id: 'pdf' });
-    },
-    pageStyle: `
-      @page { size: A4 portrait; margin: 10mm; }
-      @media print {
-        body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      }
-    `
-  })
 
   const [cargando, setCargando] = useState(true)
   const [partido, setPartido] = useState(null)
@@ -55,6 +33,11 @@ export default function PartidoVivo() {
   const [pasoFirma, setPasoFirma] = useState(null)
   const [firmasTemporales, setFirmasTemporales] = useState([])
   const [novedadesGenerales, setNovedadesGenerales] = useState('')
+
+  // Función nativa para imprimir/guardar PDF
+  const handlePrint = () => {
+    window.print()
+  }
 
   useEffect(() => {
     async function cargarDatosOffline() {
@@ -260,7 +243,8 @@ export default function PartidoVivo() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 pb-20">
+    // 1. Aquí envolvemos todo lo visual con print:hidden
+    <div className="min-h-screen bg-gray-100 pb-20 print:hidden">
       <header className="bg-liga-azul text-white p-4 flex items-center gap-3 sticky top-0 z-10 shadow-md">
         <button onClick={() => navigate('/partidos')} className="p-2 bg-white/10 rounded-md hover:bg-white/20">
           <ArrowLeft size={20} />
@@ -379,18 +363,16 @@ export default function PartidoVivo() {
         titulo={pasoFirma === 'local' ? `Capitán ${equipoLocal?.nombre}` : pasoFirma === 'visitante' ? `Capitán ${equipoVisitante?.nombre}` : pasoFirma === 'vocal' ? 'Firma del Vocal' : 'Firma del Árbitro'}
       />
 
-      <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
-        <ActaPrintView 
-          ref={componentRef}
-          partido={partido}
-          equipoLocal={equipoLocal}
-          equipoVisitante={equipoVisitante}
-          jugadoresLocal={jugadoresLocal}
-          jugadoresVisitante={jugadoresVisitante}
-          eventos={eventos}
-          firmas={firmas}
-        />
-      </div>
+      {/* 2. El ActaPrintView va fuera del "print:hidden", al final del return */}
+      <ActaPrintView 
+        partido={partido}
+        equipoLocal={equipoLocal}
+        equipoVisitante={equipoVisitante}
+        jugadoresLocal={jugadoresLocal}
+        jugadoresVisitante={jugadoresVisitante}
+        eventos={eventos}
+        firmas={firmas}
+      />
     </div>
   )
 }

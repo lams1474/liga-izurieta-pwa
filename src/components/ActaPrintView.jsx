@@ -1,8 +1,6 @@
-import { forwardRef } from 'react'
-
-const ActaPrintView = forwardRef(({ 
+export default function ActaPrintView({ 
   partido, equipoLocal, equipoVisitante, jugadoresLocal, jugadoresVisitante, eventos, firmas 
-}, ref) => {
+}) {
   
   if (!partido) return null
 
@@ -69,7 +67,8 @@ const ActaPrintView = forwardRef(({
   const firmaVocal = firmas.find(f => f.tipo_firmante === 'vocal')
 
   return (
-    <div ref={ref} className="bg-white text-black p-8 w-[210mm] min-h-[297mm] mx-auto font-sans">
+    // OCULTO EN PANTALLA, VISIBLE AL IMPRIMIR (hidden print:block)
+    <div className="hidden print:block bg-white text-black p-4 w-full font-sans">
       
       <div className="text-center mb-6 border-b-2 border-black pb-4">
         <h1 className="text-xl font-black uppercase">Liga Deportiva Barrial José Ignacio Izurieta</h1>
@@ -141,6 +140,4 @@ const ActaPrintView = forwardRef(({
 
     </div>
   )
-})
-
-export default ActaPrintView
+}

@@ -13,7 +13,7 @@ export async function sincronizarPartido(partidoId) {
   const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_local_id).length
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_visitante_id).length
 
-  // 1. Actualizar partido (Marcador y Novedades)
+  // 1. Actualizar el partido en Supabase
   const { error: errPartido } = await supabase.from('partidos').update({
     jugado: true,
     goles_local: golesLocal,
@@ -23,27 +23,47 @@ export async function sincronizarPartido(partidoId) {
 
   if (errPartido) throw new Error('Error actualizando partido: ' + errPartido.message)
 
-  // 2. Sincronizar Eventos
+  // 2. Crear o buscar el ACTA del partido
+  let actaId; // <--- CORREGIDO AQUÍ (quitamos el = null)
+  
+  const { data: actaExistente } = await supabase.from('actas').select('id').eq('partido_id', partidoId).maybeSingle()
+
+  if (actaExistente) {
+    actaId = actaExistente.id
+  } else {
+    const { data: nuevaActa, error: errActa } = await supabase.from('actas').insert({
+      partido_id: partidoId,
+      estado: 'cerrada', 
+      observaciones: partido.observaciones || null,
+      cerrada_en: new Date().toISOString()
+    }).select().single()
+
+    if (errActa) throw new Error('Error creando acta: ' + errActa.message)
+    actaId = nuevaActa.id
+  }
+
+  // 3. Sincronizar Eventos (Goles y Tarjetas)
   for (const ev of eventosPendientes) {
     if (ev.tipo === 'gol') {
-      await supabase.from('goles').insert({ partido_id: partidoId, jugador_id: ev.jugador_id, minuto: ev.minuto, tipo: 'normal' })
+      await supabase.from('goles').insert({
+        partido_id: partidoId, jugador_id: ev.jugador_id, minuto: ev.minuto, tipo: 'normal'
+      })
     } else if (ev.tipo === 'amarilla' || ev.tipo === 'roja') {
       await supabase.from('sanciones_jugador').insert({
-        jugador_id: ev.jugador_id, equipo_id: ev.equipo_id, partido_id: partidoId, tipo: ev.tipo,
-        motivo: 'Registrado en cancha', fechas_sancion: ev.tipo === 'roja' ? 1 : 0, fechas_cumplidas: 0, activa: true
+        jugador_id: ev.jugador_id, equipo_id: ev.equipo_id, partido_id: partidoId,
+        tipo: ev.tipo, motivo: 'Registrado en cancha', fechas_sancion: ev.tipo === 'roja' ? 1 : 0,
+        fechas_cumplidas: 0, activa: true
       })
     }
     await db.eventos.update(ev.id, { sync_status: 'synced' })
   }
 
-  // 3. Sincronizar Firmas
+  // 4. Sincronizar Firmas (Vinculadas al acta_id)
   for (const f of firmasPendientes) {
     await supabase.from('firmas_acta').insert({
-      partido_id: partidoId,
+      acta_id: actaId,
       firmante_tipo: f.tipo_firmante,
       firma_digital: f.firma_base64,
-      // de_acuerdo: f.de_acuerdo,
-      // motivo: f.motivo_desacuerdo
     })
     await db.firmas.update(f.id, { sync_status: 'synced' })
   }
