@@ -6,18 +6,16 @@ const ActaPrintView = forwardRef(({
   
   if (!partido) return null
 
-  // Función para contar eventos de un jugador
   const getEstadisticas = (jugadorId) => {
     const evs = eventos.filter(e => e.jugador_id === jugadorId)
-    const goles = evs.filter(e => e.tipo === 'gol').length
-    const amarillas = evs.filter(e => e.tipo === 'amarilla').length
-    const rojas = evs.filter(e => e.tipo === 'roja').length
-    return { goles, amarillas, rojas }
+    return { 
+      goles: evs.filter(e => e.tipo === 'gol').length, 
+      amarillas: evs.filter(e => e.tipo === 'amarilla').length, 
+      rojas: evs.filter(e => e.tipo === 'roja').length 
+    }
   }
 
-  // Combinar planilla con jugadores para renderizar
   const renderTablaEquipo = (equipo, jugadores) => {
-    // Rellenar hasta 19 filas
     const filas = [...jugadores]
     while (filas.length < 19) {
       filas.push({ id: `vacio-${filas.length}`, apellidos: '', nombres: '', esVacio: true })
@@ -56,7 +54,6 @@ const ActaPrintView = forwardRef(({
           </tbody>
         </table>
         
-        {/* Cuerpo Técnico */}
         <div className="mt-2 text-xs space-y-1 border border-black p-2">
           <p><strong>DT:</strong> _______________________________________________________________</p>
           <p><strong>AT:</strong> _______________________________________________________________</p>
@@ -66,7 +63,6 @@ const ActaPrintView = forwardRef(({
     )
   }
 
-  // Encontrar firmas específicas
   const firmaArbitro = firmas.find(f => f.tipo_firmante === 'arbitro')
   const firmaCapitanLocal = firmas.find(f => f.tipo_firmante === 'local')
   const firmaCapitanVisitante = firmas.find(f => f.tipo_firmante === 'visitante')
@@ -75,7 +71,6 @@ const ActaPrintView = forwardRef(({
   return (
     <div ref={ref} className="bg-white text-black p-8 w-[210mm] min-h-[297mm] mx-auto font-sans">
       
-      {/* ENCABEZADO */}
       <div className="text-center mb-6 border-b-2 border-black pb-4">
         <h1 className="text-xl font-black uppercase">Liga Deportiva Barrial José Ignacio Izurieta</h1>
         <p className="text-xs">Pujilí – Ecuador</p>
@@ -83,7 +78,6 @@ const ActaPrintView = forwardRef(({
         <h2 className="text-lg font-bold mt-2">ACTA DE JUEGO</h2>
       </div>
 
-      {/* DATOS DEL PARTIDO */}
       <div className="flex justify-between text-sm mb-4">
         <div>
           <p><strong>FECHA:</strong> {partido.hora ? partido.hora.slice(0,5) : '--:--'}</p>
@@ -95,11 +89,9 @@ const ActaPrintView = forwardRef(({
         </div>
       </div>
 
-      {/* TABLAS DE JUGADORES */}
       {renderTablaEquipo(equipoLocal, jugadoresLocal)}
       {renderTablaEquipo(equipoVisitante, jugadoresVisitante)}
 
-      {/* NOVEDADES */}
       <div className="mt-4">
         <h3 className="font-bold text-sm border-b border-black mb-1">NOVEDADES:</h3>
         <div className="min-h-[80px] text-xs whitespace-pre-wrap">
@@ -107,7 +99,6 @@ const ActaPrintView = forwardRef(({
         </div>
       </div>
 
-      {/* FIRMAS */}
       <div className="mt-12 grid grid-cols-2 gap-8 text-center text-xs">
         <div>
           <div className="h-16 flex items-end justify-center mb-1">
