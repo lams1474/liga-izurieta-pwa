@@ -13,7 +13,7 @@ export default function PartidoVivo() {
   const { id } = useParams()
   const navigate = useNavigate()
   
-  // Referencia para el PDF
+  // Referencia para la generación del PDF
   const componentRef = useRef()
   const handlePrint = useReactToPrint({
     content: () => componentRef.current,
@@ -29,13 +29,16 @@ export default function PartidoVivo() {
   const [jugadoresVisitante, setJugadoresVisitante] = useState([])
   const [eventos, setEventos] = useState([])
   const [planillaLocal, setPlanillaLocal] = useState([])
+  
+  // Estados para validaciones y PDF
   const [carnets, setCarnets] = useState([])
   const [sanciones, setSanciones] = useState([])
-  const [firmas, setFirmas] = useState([]) // <-- AGREGADO: Estado para las firmas
+  const [firmas, setFirmas] = useState([]) 
 
   const [jugadorSeleccionado, setJugadorSeleccionado] = useState(null)
   const [finalizando, setFinalizando] = useState(false)
 
+  // Estados para el flujo de firmas
   const [pasoFirma, setPasoFirma] = useState(null)
   const [firmasTemporales, setFirmasTemporales] = useState([])
   const [novedadesGenerales, setNovedadesGenerales] = useState('')
@@ -73,7 +76,7 @@ export default function PartidoVivo() {
         const evs = await db.eventos.where('partido_id').equals(id).toArray()
         setEventos(evs)
 
-        // Cargar firmas desde Dexie (en caso de que ya se haya jugado)
+        // Cargar firmas en caso de que ya se haya jugado y se requiera imprimir
         const f = await db.firmas.where('partido_id').equals(id).toArray()
         setFirmas(f)
 
@@ -91,12 +94,23 @@ export default function PartidoVivo() {
     cargarDatosOffline()
   }, [id])
 
+  // Evaluar si un jugador está habilitado (Revisa si tiene AL MENOS un carnet válido)
   const evaluarJugador = (jugadorId) => {
-    const carnet = carnets.find(c => c.jugador_id === jugadorId)
-    if (!carnet || !carnet.valido) return { habilitado: false, motivo: 'Sin carnet válido' }
+    const carnetsJugador = carnets.filter(c => c.jugador_id === jugadorId)
+    
+    if (carnetsJugador.length === 0) {
+      return { habilitado: false, motivo: 'Sin carnet registrado' }
+    }
+    
+    const tieneCarnetValido = carnetsJugador.some(c => c.valido === true)
+    if (!tieneCarnetValido) {
+      return { habilitado: false, motivo: 'Carnet no válido' }
+    }
     
     const sancion = sanciones.find(s => s.jugador_id === jugadorId && s.activa)
-    if (sancion) return { habilitado: false, motivo: `Sanción: ${sancion.motivo || sancion.tipo}` }
+    if (sancion) {
+      return { habilitado: false, motivo: `Sanción: ${sancion.motivo || sancion.tipo}` }
+    }
 
     return { habilitado: true, motivo: null }
   }
@@ -121,7 +135,7 @@ export default function PartidoVivo() {
 
   async function registrarEvento(tipo) {
     if (!jugadorSeleccionado) return
-    const minutoStr = prompt(`Ingrese el minuto (1-90):`, "1")
+    const minutoStr = prompt(`Ingrese el minuto del evento (1-90):`, "1")
     if (minutoStr === null) return 
     const minuto = parseInt(minutoStr) || 0
 
@@ -132,7 +146,7 @@ export default function PartidoVivo() {
       }
       const eventId = await db.eventos.add(nuevoEvento)
       setEventos(prev => [...prev, { ...nuevoEvento, id: eventId }])
-      toast.success('Evento registrado')
+      toast.success('Evento registrado correctamente')
     } catch (err) {
       console.error(err)
       toast.error('Error al guardar evento')
@@ -172,7 +186,7 @@ export default function PartidoVivo() {
         })
       }
       
-      // Actualizamos el estado de las firmas para que el PDF las tenga
+      // Actualizamos el estado de firmas para que el PDF las tome
       const firmasActualizadas = await db.firmas.where('partido_id').equals(id).toArray()
       setFirmas(firmasActualizadas)
 
@@ -182,19 +196,19 @@ export default function PartidoVivo() {
       }
 
       if (navigator.onLine) {
-        toast.loading('Sincronizando...', { id: 'sync' })
+        toast.loading('Sincronizando acta con la nube...', { id: 'sync' })
         await sincronizarPartido(id)
         toast.success('Acta sincronizada', { id: 'sync' })
       } else {
         await db.partidos.update(id, { jugado: true, sincronizado: false })
-        toast.success('Acta cerrada offline', { icon: '📡' })
+        toast.success('Acta cerrada offline. Se sincronizará luego.', { icon: '📡' })
       }
       
       setPartido(prev => ({ ...prev, jugado: true }))
       
     } catch (error) {
       console.error(error)
-      toast.error('Error: ' + error.message)
+      toast.error('Error al finalizar: ' + error.message)
     } finally {
       setFinalizando(false)
     }
@@ -203,6 +217,7 @@ export default function PartidoVivo() {
   if (cargando) return <div className="min-h-screen flex items-center justify-center font-bold">Cargando...</div>
   if (!partido) return <div className="p-8 text-center text-xl font-bold">Partido no encontrado</div>
 
+  // Renderizador de la fila de cada jugador
   const renderJugador = (j, equipoId) => {
     const { habilitado, motivo } = evaluarJugador(j.id)
     const titular = esTitular(j.id, equipoId)
@@ -237,8 +252,11 @@ export default function PartidoVivo() {
 
   return (
     <div className="min-h-screen bg-gray-100 pb-20">
+      {/* Header */}
       <header className="bg-liga-azul text-white p-4 flex items-center gap-3 sticky top-0 z-10 shadow-md">
-        <button onClick={() => navigate('/partidos')} className="p-2 bg-white/10 rounded-md hover:bg-white/20"><ArrowLeft size={20} /></button>
+        <button onClick={() => navigate('/partidos')} className="p-2 bg-white/10 rounded-md hover:bg-white/20">
+          <ArrowLeft size={20} />
+        </button>
         <div>
           <h1 className="font-bold">Partido en Vivo</h1>
           <p className="text-xs text-liga-amarillo capitalize">Sesión: {rolUsuario}</p>
@@ -246,6 +264,7 @@ export default function PartidoVivo() {
       </header>
 
       <main className="max-w-4xl mx-auto p-4 space-y-4">
+        {/* Marcador */}
         <div className="bg-white rounded-lg shadow-md p-4 text-center">
           <div className="flex justify-between items-center text-gray-500 text-sm mb-2 px-4">
             <span className="flex items-center gap-1"><Clock size={14}/> {partido.hora?.slice(0,5)}</span>
@@ -258,23 +277,33 @@ export default function PartidoVivo() {
           </div>
         </div>
 
+        {/* Listas de Jugadores */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white rounded-lg shadow-md overflow-hidden">
-            <div className="bg-liga-azul text-white p-3 flex justify-between items-center"><h3 className="font-bold flex items-center gap-2"><Shield size={18} /> {equipoLocal?.nombre}</h3></div>
+            <div className="bg-liga-azul text-white p-3 flex justify-between items-center">
+              <h3 className="font-bold flex items-center gap-2"><Shield size={18} /> {equipoLocal?.nombre}</h3>
+            </div>
             <div className="divide-y divide-gray-100">{jugadoresLocal.map(j => renderJugador(j, partido.equipo_local_id))}</div>
           </div>
+          
           <div className="bg-white rounded-lg shadow-md overflow-hidden">
-            <div className="bg-gray-800 text-white p-3 flex justify-between items-center"><h3 className="font-bold flex items-center gap-2"><Shield size={18} /> {equipoVisitante?.nombre}</h3></div>
+            <div className="bg-gray-800 text-white p-3 flex justify-between items-center">
+              <h3 className="font-bold flex items-center gap-2"><Shield size={18} /> {equipoVisitante?.nombre}</h3>
+            </div>
             <div className="divide-y divide-gray-100">{jugadoresVisitante.map(j => renderJugador(j, partido.equipo_visitante_id))}</div>
           </div>
         </div>
 
+        {/* Botones de Acción */}
         <div className="mt-8">
-          <button onClick={iniciarCierre} disabled={finalizando || partido.jugado} className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 ${partido.jugado ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-liga-rojo text-white hover:bg-red-700'}`}>
+          <button 
+            onClick={iniciarCierre} 
+            disabled={finalizando || partido.jugado} 
+            className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 ${partido.jugado ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-liga-rojo text-white hover:bg-red-700'}`}
+          >
             {finalizando ? 'Procesando...' : partido.jugado ? 'Acta Finalizada' : 'Finalizar Partido y Firmar Acta'}
           </button>
 
-          {/* BOTÓN DE IMPRIMIR (Solo aparece si el partido ya está jugado) */}
           {partido.jugado && (
             <button
               onClick={handlePrint}
@@ -286,7 +315,7 @@ export default function PartidoVivo() {
         </div>
       </main>
 
-      {/* MODAL DE ACCIONES */}
+      {/* MODAL DE ACCIONES DEL JUGADOR */}
       {jugadorSeleccionado && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center">
           <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl p-5 animate-in slide-in-from-bottom-5">
@@ -299,6 +328,7 @@ export default function PartidoVivo() {
               <button onClick={() => setJugadorSeleccionado(null)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={20} /></button>
             </div>
 
+            {/* Control de Titulares (Solo Vocal) */}
             {rolUsuario === 'vocal' && (
               <div className="mb-4">
                 <button 
@@ -321,6 +351,7 @@ export default function PartidoVivo() {
                </div>
             )}
 
+            {/* Botones de Eventos */}
             <div className="grid grid-cols-1 gap-2 pt-2 border-t">
               <p className="text-xs text-center text-gray-500 mb-1">Registrar Evento:</p>
               <button onClick={() => registrarEvento('gol')} disabled={!jugadorSeleccionado.habilitado} className="bg-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
@@ -337,8 +368,13 @@ export default function PartidoVivo() {
         </div>
       )}
 
+      {/* MODAL DE FIRMAS */}
       <FirmaModal 
-        key={pasoFirma} isOpen={!!pasoFirma} onClose={() => setPasoFirma(null)} onSave={handleGuardarFirma} tipoFirmante={pasoFirma}
+        key={pasoFirma} 
+        isOpen={!!pasoFirma} 
+        onClose={() => setPasoFirma(null)} 
+        onSave={handleGuardarFirma} 
+        tipoFirmante={pasoFirma}
         titulo={pasoFirma === 'local' ? `Capitán ${equipoLocal?.nombre}` : pasoFirma === 'visitante' ? `Capitán ${equipoVisitante?.nombre}` : pasoFirma === 'vocal' ? 'Firma del Vocal' : 'Firma del Árbitro'}
       />
 
