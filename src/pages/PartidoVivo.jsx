@@ -1,21 +1,29 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { db } from '../lib/db'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Clock, MapPin, Shield, User, X, Circle, CheckCircle, Lock } from 'lucide-react'
+import { ArrowLeft, Clock, MapPin, Shield, User, X, Circle, CheckCircle, Lock, Printer } from 'lucide-react'
 import { sincronizarPartido } from '../lib/sincronizarPartido'
 import FirmaModal from '../components/FirmaModal'
+import { useReactToPrint } from 'react-to-print'
+import ActaPrintView from '../components/ActaPrintView'
 
 export default function PartidoVivo() {
   const { id } = useParams()
   const navigate = useNavigate()
+  
+  // Referencia para el PDF
+  const componentRef = useRef()
+  const handlePrint = useReactToPrint({
+    content: () => componentRef.current,
+  })
 
   const [cargando, setCargando] = useState(true)
   const [partido, setPartido] = useState(null)
   const [equipoLocal, setEquipoLocal] = useState(null)
   const [equipoVisitante, setEquipoVisitante] = useState(null)
-  const [rolUsuario, setRolUsuario] = useState(null) // 'arbitro' o 'vocal'
+  const [rolUsuario, setRolUsuario] = useState(null)
 
   const [jugadoresLocal, setJugadoresLocal] = useState([])
   const [jugadoresVisitante, setJugadoresVisitante] = useState([])
@@ -23,6 +31,7 @@ export default function PartidoVivo() {
   const [planillaLocal, setPlanillaLocal] = useState([])
   const [carnets, setCarnets] = useState([])
   const [sanciones, setSanciones] = useState([])
+  const [firmas, setFirmas] = useState([]) // <-- AGREGADO: Estado para las firmas
 
   const [jugadorSeleccionado, setJugadorSeleccionado] = useState(null)
   const [finalizando, setFinalizando] = useState(false)
@@ -34,7 +43,6 @@ export default function PartidoVivo() {
   useEffect(() => {
     async function cargarDatosOffline() {
       try {
-        // 1. Saber quién soy
         const { data: { session } } = await supabase.auth.getSession()
         const userId = session?.user?.id
 
@@ -42,7 +50,6 @@ export default function PartidoVivo() {
         if (!p) { setCargando(false); return }
         setPartido(p)
 
-        // Determinamos el rol
         if (p.vocal_id === userId) setRolUsuario('vocal')
         else setRolUsuario('arbitro')
 
@@ -66,9 +73,12 @@ export default function PartidoVivo() {
         const evs = await db.eventos.where('partido_id').equals(id).toArray()
         setEventos(evs)
 
-        // Cargar carnets y sanciones para validar
+        // Cargar firmas desde Dexie (en caso de que ya se haya jugado)
+        const f = await db.firmas.where('partido_id').equals(id).toArray()
+        setFirmas(f)
+
         const c = await db.carnets.toArray()
-        const s = await db.sanciones.where('partido_id').equals(id).toArray() // Sanciones de este partido
+        const s = await db.sanciones.where('partido_id').equals(id).toArray() 
         setCarnets(c)
         setSanciones(s)
 
@@ -81,7 +91,6 @@ export default function PartidoVivo() {
     cargarDatosOffline()
   }, [id])
 
-  // Evaluar si un jugador está habilitado
   const evaluarJugador = (jugadorId) => {
     const carnet = carnets.find(c => c.jugador_id === jugadorId)
     if (!carnet || !carnet.valido) return { habilitado: false, motivo: 'Sin carnet válido' }
@@ -98,7 +107,6 @@ export default function PartidoVivo() {
   const esTitular = (jugadorId, equipoId) => planillaLocal.find(pl => pl.jugador_id === jugadorId && pl.equipo_id === equipoId)?.es_titular || false
 
   async function toggleTitular(jugadorId, equipoId) {
-    // Solo el vocal (o en su defecto el arbitro) puede cambiar titulares
     const { habilitado, motivo } = evaluarJugador(jugadorId)
     if (!habilitado) return toast.error(`No se puede habilitar: ${motivo}`)
 
@@ -163,7 +171,15 @@ export default function PartidoVivo() {
           de_acuerdo: f.deAcuerdo, motivo_desacuerdo: f.motivo, sync_status: 'pending'
         })
       }
-      if (textoNovedades) await db.partidos.update(id, { observaciones: textoNovedades })
+      
+      // Actualizamos el estado de las firmas para que el PDF las tenga
+      const firmasActualizadas = await db.firmas.where('partido_id').equals(id).toArray()
+      setFirmas(firmasActualizadas)
+
+      if (textoNovedades) {
+        await db.partidos.update(id, { observaciones: textoNovedades })
+        setPartido(prev => ({ ...prev, observaciones: textoNovedades, jugado: true }))
+      }
 
       if (navigator.onLine) {
         toast.loading('Sincronizando...', { id: 'sync' })
@@ -173,7 +189,9 @@ export default function PartidoVivo() {
         await db.partidos.update(id, { jugado: true, sincronizado: false })
         toast.success('Acta cerrada offline', { icon: '📡' })
       }
-      navigate('/partidos')
+      
+      setPartido(prev => ({ ...prev, jugado: true }))
+      
     } catch (error) {
       console.error(error)
       toast.error('Error: ' + error.message)
@@ -185,7 +203,6 @@ export default function PartidoVivo() {
   if (cargando) return <div className="min-h-screen flex items-center justify-center font-bold">Cargando...</div>
   if (!partido) return <div className="p-8 text-center text-xl font-bold">Partido no encontrado</div>
 
-  // Renderizador de jugador
   const renderJugador = (j, equipoId) => {
     const { habilitado, motivo } = evaluarJugador(j.id)
     const titular = esTitular(j.id, equipoId)
@@ -256,6 +273,16 @@ export default function PartidoVivo() {
           <button onClick={iniciarCierre} disabled={finalizando || partido.jugado} className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 ${partido.jugado ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-liga-rojo text-white hover:bg-red-700'}`}>
             {finalizando ? 'Procesando...' : partido.jugado ? 'Acta Finalizada' : 'Finalizar Partido y Firmar Acta'}
           </button>
+
+          {/* BOTÓN DE IMPRIMIR (Solo aparece si el partido ya está jugado) */}
+          {partido.jugado && (
+            <button
+              onClick={handlePrint}
+              className="w-full mt-3 py-4 rounded-xl font-bold text-lg shadow-lg bg-gray-800 text-white hover:bg-black transition-colors flex items-center justify-center gap-2"
+            >
+              <Printer size={20} /> Descargar / Imprimir Acta PDF
+            </button>
+          )}
         </div>
       </main>
 
@@ -272,7 +299,6 @@ export default function PartidoVivo() {
               <button onClick={() => setJugadorSeleccionado(null)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={20} /></button>
             </div>
 
-            {/* SOLO EL VOCAL PUEDE ARMAR LA PLANILLA */}
             {rolUsuario === 'vocal' && (
               <div className="mb-4">
                 <button 
@@ -295,7 +321,6 @@ export default function PartidoVivo() {
                </div>
             )}
 
-            {/* AMBOS PUEDEN REGISTRAR EVENTOS (GOLES/TARJETAS) */}
             <div className="grid grid-cols-1 gap-2 pt-2 border-t">
               <p className="text-xs text-center text-gray-500 mb-1">Registrar Evento:</p>
               <button onClick={() => registrarEvento('gol')} disabled={!jugadorSeleccionado.habilitado} className="bg-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
@@ -316,6 +341,20 @@ export default function PartidoVivo() {
         key={pasoFirma} isOpen={!!pasoFirma} onClose={() => setPasoFirma(null)} onSave={handleGuardarFirma} tipoFirmante={pasoFirma}
         titulo={pasoFirma === 'local' ? `Capitán ${equipoLocal?.nombre}` : pasoFirma === 'visitante' ? `Capitán ${equipoVisitante?.nombre}` : pasoFirma === 'vocal' ? 'Firma del Vocal' : 'Firma del Árbitro'}
       />
+
+      {/* COMPONENTE OCULTO PARA GENERAR EL PDF */}
+      <div className="hidden">
+        <ActaPrintView 
+          ref={componentRef}
+          partido={partido}
+          equipoLocal={equipoLocal}
+          equipoVisitante={equipoVisitante}
+          jugadoresLocal={jugadoresLocal}
+          jugadoresVisitante={jugadoresVisitante}
+          eventos={eventos}
+          firmas={firmas}
+        />
+      </div>
     </div>
   )
 }
