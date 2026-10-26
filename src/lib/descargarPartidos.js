@@ -54,12 +54,13 @@ export async function descargarMisPartidos() {
 
   const { data: jugadores } = await supabase.from('jugadores').select('id, nombres, apellidos, cedula, foto_url, fecha_nacimiento, es_menor').in('id', idsToFetch)
   
-  // AQUÍ ESTÁ EL CAMBIO CLAVE: Evaluar jugador por jugador con la misma regla del Admin
+  // AQUÍ ESTÁ LA CORRECCIÓN: Agregamos "id: je.jugador_id" al objeto del carnet
   const carnetsReales = []
   for (const je of (jugadorEquipo || [])) {
     const { data: val } = await supabase.rpc('validar_carnet', { p_jugador_id: je.jugador_id, p_equipo_id: je.equipo_id })
     
     carnetsReales.push({
+      id: je.jugador_id, // <--- ESTO FALTABA PARA QUE DEXIE NO DE ERROR
       jugador_id: je.jugador_id,
       equipo_id: je.equipo_id,
       valido: val?.[0]?.estado === 'HABILITADO',
@@ -94,7 +95,7 @@ export async function descargarMisPartidos() {
     await db.equipos.bulkPut(equipos || [])
     await db.jugadores.bulkPut(jugadores || [])
     await db.planilla.bulkPut(planillaLocal)
-    await db.carnets.bulkPut(carnetsReales) // <-- Guardamos el estado real
+    await db.carnets.bulkPut(carnetsReales) // Guardamos con el ID corregido
     await db.sanciones.bulkPut(sanciones || [])
   })
 
