@@ -157,6 +157,9 @@ export default function PartidoVivo() {
   async function ejecutarFinalizacion(firmasFinales, textoNovedades) {
     setFinalizando(true)
     try {
+      // AQUI AGREGAMOS ESTO: Borrar firmas viejas de la base local antes de guardar las nuevas
+      await db.firmas.where('partido_id').equals(id).delete()
+
       for (const f of firmasFinales) {
         await db.firmas.add({
           partido_id: id, tipo_firmante: f.tipo, firma_base64: f.firma,
@@ -172,12 +175,12 @@ export default function PartidoVivo() {
       }
 
       if (navigator.onLine) {
-        toast.loading('Sincronizando acta...', { id: 'sync' })
+        toast.loading('Sincronizando acta con la nube...', { id: 'sync' })
         await sincronizarPartido(id)
         toast.success('Acta sincronizada', { id: 'sync' })
       } else {
         await db.partidos.update(id, { jugado: true, sincronizado: false })
-        toast.success('Acta cerrada offline', { icon: '📡' })
+        toast.success('Acta cerrada offline. Se sincronizará luego.', { icon: '📡' })
       }
       setPartido(prev => ({ ...prev, jugado: true }))
     } catch (error) {
