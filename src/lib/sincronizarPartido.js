@@ -17,7 +17,6 @@ export async function sincronizarPartido(partidoId) {
 
   if (actaExistente) {
     actaId = actaExistente.id
-    // Limpiamos firmas viejas para no duplicar
     await supabase.from('firmas_acta').delete().eq('acta_id', actaId)
     await supabase.from('actas').update({ observaciones: partido.observaciones || null }).eq('id', actaId)
   } else {
@@ -32,11 +31,10 @@ export async function sincronizarPartido(partidoId) {
     actaId = nuevaActa.id
   }
 
-  // 2. Limpiar goles/sanciones viejos de este partido para no duplicar
+  // 2. Limpiar e Insertar los Eventos (Goles y Tarjetas)
   await supabase.from('goles').delete().eq('partido_id', partidoId)
   await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
 
-  // 3. Insertar los Eventos (Goles y Tarjetas)
   for (const ev of eventos) {
     if (ev.tipo === 'gol') {
       await supabase.from('goles').insert({
@@ -55,17 +53,7 @@ export async function sincronizarPartido(partidoId) {
     await db.eventos.update(ev.id, { sync_status: 'synced' })
   }
 
-  // 4. Insertar Firmas
-  for (const f of firmas) {
-    await supabase.from('firmas_acta').insert({
-      acta_id: actaId,
-      firmante_tipo: f.tipo_firmante,
-      firma_digital: f.firma_base64,
-    })
-    await db.firmas.update(f.id, { sync_status: 'synced' })
-  }
-
-  // 5. ACTUALIZAR EL PARTIDO AL FINAL
+  // 3. ACTUALIZAR EL PARTIDO (Antes de las firmas, por si fallan)
   const { error: errPartido } = await supabase.from('partidos').update({
     jugado: true,
     goles_local: golesLocal,
@@ -75,11 +63,28 @@ export async function sincronizarPartido(partidoId) {
 
   if (errPartido) throw new Error('Error actualizando partido: ' + errPartido.message)
 
+  // 4. Insertar Firmas (Traduciendo 'local' a 'capitan_local')
+  for (const f of firmas) {
+    let tipoValido = f.tipo_firmante
+    if (tipoValido === 'local') tipoValido = 'capitan_local'
+    if (tipoValido === 'visitante') tipoValido = 'capitan_visitante'
+
+    try {
+      await supabase.from('firmas_acta').insert({
+        acta_id: actaId,
+        firmante_tipo: tipoValido,
+        firma_digital: f.firma_base64,
+      })
+      await db.firmas.update(f.id, { sync_status: 'synced' })
+    } catch (err) {
+      console.error("Error insertando firma:", err)
+    }
+  }
+
   await db.partidos.update(partidoId, { jugado: true, sincronizado: true, goles_local: golesLocal, goles_visitante: golesVisitante })
   return { golesLocal, golesVisitante }
 }
 
-// ESTA ES LA FUNCIÓN QUE FALTABA
 export function iniciarAutoSincronizacion() {
   window.addEventListener('online', async () => {
     const partidos = await db.partidos.toArray()
