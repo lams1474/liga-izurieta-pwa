@@ -43,7 +43,6 @@ export async function sincronizarPartido(partidoId) {
         partido_id: partidoId, jugador_id: ev.jugador_id, minuto: ev.minuto, tipo: 'normal'
       })
     } else if (ev.tipo === 'amarilla' || ev.tipo === 'roja') {
-      // Buscamos la etapa para evitar errores de constraint
       const { data: pData } = await supabase.from('partidos').select('fecha_id, fechas(etapa_id)').eq('id', partidoId).single()
       const etapaId = pData?.fechas?.etapa_id
 
@@ -66,7 +65,7 @@ export async function sincronizarPartido(partidoId) {
     await db.firmas.update(f.id, { sync_status: 'synced' })
   }
 
-  // 5. ACTUALIZAR EL PARTIDO AL FINAL (Para asegurar que los goles ya están en la BD)
+  // 5. ACTUALIZAR EL PARTIDO AL FINAL
   const { error: errPartido } = await supabase.from('partidos').update({
     jugado: true,
     goles_local: golesLocal,
@@ -78,4 +77,15 @@ export async function sincronizarPartido(partidoId) {
 
   await db.partidos.update(partidoId, { jugado: true, sincronizado: true, goles_local: golesLocal, goles_visitante: golesVisitante })
   return { golesLocal, golesVisitante }
+}
+
+// ESTA ES LA FUNCIÓN QUE FALTABA
+export function iniciarAutoSincronizacion() {
+  window.addEventListener('online', async () => {
+    const partidos = await db.partidos.toArray()
+    const pendientes = partidos.filter(p => p.jugado && !p.sincronizado)
+    for (const p of pendientes) {
+      try { await sincronizarPartido(p.id) } catch (error) { console.error(error) }
+    }
+  })
 }
