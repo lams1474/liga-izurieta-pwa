@@ -53,7 +53,6 @@ export default function PartidoVivo() {
         setTiempoRestante(prev => {
           if (prev <= 1) {
             clearInterval(intervalo)
-            // Usamos setTimeout para evitar el error de setState síncrono en el effect
             setTimeout(() => {
               setRelojCorriendo(false)
               toast.error('¡Tiempo finalizado!', { icon: '⏱️' })
@@ -66,7 +65,7 @@ export default function PartidoVivo() {
     }
     
     return () => clearInterval(intervalo)
-  }, [relojCorriendo]) // Solo depende de si está corriendo o no, no de los segundos
+  }, [relojCorriendo])
 
   useEffect(() => {
     async function cargarDatosOffline() {
@@ -143,11 +142,20 @@ export default function PartidoVivo() {
     }
   }
 
+  // Función para formatear el reloj
   const formatearTiempo = (segundos) => {
     const m = Math.floor(segundos / 60).toString().padStart(2, '0')
     const s = (segundos % 60).toString().padStart(2, '0')
     return `${m}:${s}`
   }
+
+  // Filtros para faltas y eventos
+  const faltasEqLocal = faltas.filter(f => f.equipo_id === partido?.equipo_local_id && Number(f.periodo) === periodoActual).length
+  const faltasEqVisitante = faltas.filter(f => f.equipo_id === partido?.equipo_visitante_id && Number(f.periodo) === periodoActual).length
+
+  const getEventosJugador = (jugadorId) => eventos.filter(e => e.jugador_id === jugadorId)
+  const getFaltasJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId && Number(f.periodo) === periodoActual)
+  const esTitular = (jugadorId, equipoId) => planillaLocal.find(pl => pl.jugador_id === jugadorId && pl.equipo_id === equipoId)?.es_titular || false
 
   const evaluarJugador = (jugadorId) => {
     const carnetsJugador = carnets.filter(c => c.jugador_id === jugadorId)
@@ -161,13 +169,6 @@ export default function PartidoVivo() {
 
   const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido?.equipo_local_id).length
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido?.equipo_visitante_id).length
-  
-  const faltasEqLocal = faltas.filter(f => f.equipo_id === partido?.equipo_local_id && f.periodo === periodoActual).length
-  const faltasEqVisitante = faltas.filter(f => f.equipo_id === partido?.equipo_visitante_id && f.periodo === periodoActual).length
-
-  const getEventosJugador = (jugadorId) => eventos.filter(e => e.jugador_id === jugadorId)
-  const getFaltasJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId && f.periodo === periodoActual)
-  const esTitular = (jugadorId, equipoId) => planillaLocal.find(pl => pl.jugador_id === jugadorId && pl.equipo_id === equipoId)?.es_titular || false
 
   async function toggleTitular(jugadorId, equipoId) {
     const { habilitado, motivo } = evaluarJugador(jugadorId)
@@ -215,13 +216,13 @@ export default function PartidoVivo() {
         jugador_id: jugadorSeleccionado.jugador.id,
         equipo_id: jugadorSeleccionado.equipoId,
         tipo: 'personal',
-        periodo: periodoActual,
+        periodo: Number(periodoActual),
         minuto: minuto
       }
       const faltaId = await db.faltas.add(nuevaFalta)
       setFaltas(prev => [...prev, { ...nuevaFalta, id: faltaId }])
       
-      const faltasJugador = faltas.filter(f => f.jugador_id === jugadorSeleccionado.jugador.id && f.periodo === periodoActual).length + 1
+      const faltasJugador = faltas.filter(f => f.jugador_id === jugadorSeleccionado.jugador.id && Number(f.periodo) === periodoActual).length + 1
       if (faltasJugador === 5) {
         toast.error('¡5ta Falta Personal! El jugador debe ser expulsado.', { duration: 5000 })
       }
