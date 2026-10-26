@@ -26,7 +26,6 @@ export async function descargarMisPartidos() {
 
   if (errPartidos) throw errPartidos
 
-  // Limpiar partidos viejos en Dexie
   const partidosLocales = await db.partidos.toArray()
   const partidosNubeIds = (partidos || []).map(p => p.id)
   const partidosABorrar = partidosLocales.filter(p => !partidosNubeIds.includes(p.id))
@@ -54,13 +53,12 @@ export async function descargarMisPartidos() {
 
   const { data: jugadores } = await supabase.from('jugadores').select('id, nombres, apellidos, cedula, foto_url, fecha_nacimiento, es_menor').in('id', idsToFetch)
   
-  // AQUÍ ESTÁ LA CORRECCIÓN: Agregamos "id: je.jugador_id" al objeto del carnet
   const carnetsReales = []
   for (const je of (jugadorEquipo || [])) {
     const { data: val } = await supabase.rpc('validar_carnet', { p_jugador_id: je.jugador_id, p_equipo_id: je.equipo_id })
     
     carnetsReales.push({
-      id: je.jugador_id, // <--- ESTO FALTABA PARA QUE DEXIE NO DE ERROR
+      id: je.jugador_id, // ID para Dexie
       jugador_id: je.jugador_id,
       equipo_id: je.equipo_id,
       valido: val?.[0]?.estado === 'HABILITADO',
@@ -80,8 +78,12 @@ export async function descargarMisPartidos() {
         const jugador = jugadores?.find(j => j.id === je.jugador_id)
         if (!jugador) return
         const adminInsc = planillaAdmin?.find(pa => pa.partido_id === p.id && pa.jugador_id === je.jugador_id)
+        
+        // Generamos un ID seguro por si crypto.randomUUID() falla
+        const idSeguro = adminInsc?.id || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
         planillaLocal.push({
-          id: adminInsc?.id || crypto.randomUUID(),
+          id: idSeguro,
           partido_id: p.id, equipo_id: eqId, jugador_id: je.jugador_id,
           es_titular: adminInsc ? adminInsc.es_titular : false,
           dorsal: je.dorsal || null, posicion: je.posicion || null
@@ -95,7 +97,7 @@ export async function descargarMisPartidos() {
     await db.equipos.bulkPut(equipos || [])
     await db.jugadores.bulkPut(jugadores || [])
     await db.planilla.bulkPut(planillaLocal)
-    await db.carnets.bulkPut(carnetsReales) // Guardamos con el ID corregido
+    await db.carnets.bulkPut(carnetsReales) 
     await db.sanciones.bulkPut(sanciones || [])
   })
 
