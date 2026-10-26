@@ -39,15 +39,12 @@ export default function PartidoVivo() {
   const [firmasTemporales, setFirmasTemporales] = useState([])
   const [novedadesGenerales, setNovedadesGenerales] = useState('')
 
-  // === ESTADOS PARA EL RELOJ Y PERIODOS ===
   const [periodoActual, setPeriodoActual] = useState(1)
   const [tiempoRestante, setTiempoRestante] = useState(22 * 60)
   const [relojCorriendo, setRelojCorriendo] = useState(false)
 
-  // EFECTO CORREGIDO DEL CRONÓMETRO
   useEffect(() => {
     let intervalo = null
-    
     if (relojCorriendo) {
       intervalo = setInterval(() => {
         setTiempoRestante(prev => {
@@ -63,7 +60,6 @@ export default function PartidoVivo() {
         })
       }, 1000)
     }
-    
     return () => clearInterval(intervalo)
   }, [relojCorriendo])
 
@@ -124,13 +120,8 @@ export default function PartidoVivo() {
     cargarDatosOffline()
   }, [id])
 
-  // === CONTROLES DEL RELOJ Y PERIODOS ===
   const toggleReloj = () => setRelojCorriendo(!relojCorriendo)
-  
-  const reiniciarReloj = () => {
-    setRelojCorriendo(false)
-    setTiempoRestante(22 * 60)
-  }
+  const reiniciarReloj = () => { setRelojCorriendo(false); setTiempoRestante(22 * 60) }
 
   const pasarSegundoTiempo = () => {
     if (periodoActual === 2) return
@@ -142,19 +133,20 @@ export default function PartidoVivo() {
     }
   }
 
-  // Función para formatear el reloj
   const formatearTiempo = (segundos) => {
     const m = Math.floor(segundos / 60).toString().padStart(2, '0')
     const s = (segundos % 60).toString().padStart(2, '0')
     return `${m}:${s}`
   }
 
-  // Filtros para faltas y eventos
-  const faltasEqLocal = faltas.filter(f => f.equipo_id === partido?.equipo_local_id && Number(f.periodo) === periodoActual).length
-  const faltasEqVisitante = faltas.filter(f => f.equipo_id === partido?.equipo_visitante_id && Number(f.periodo) === periodoActual).length
+  // Filtros de faltas robustos (si no tienen periodo, asumimos 1)
+  const isMismoPeriodo = (f) => Number(f.periodo || 1) === Number(periodoActual)
+  
+  const faltasEqLocal = faltas.filter(f => f.equipo_id === partido?.equipo_local_id && isMismoPeriodo(f)).length
+  const faltasEqVisitante = faltas.filter(f => f.equipo_id === partido?.equipo_visitante_id && isMismoPeriodo(f)).length
 
   const getEventosJugador = (jugadorId) => eventos.filter(e => e.jugador_id === jugadorId)
-  const getFaltasJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId && Number(f.periodo) === periodoActual)
+  const getFaltasJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId && isMismoPeriodo(f))
   const esTitular = (jugadorId, equipoId) => planillaLocal.find(pl => pl.jugador_id === jugadorId && pl.equipo_id === equipoId)?.es_titular || false
 
   const evaluarJugador = (jugadorId) => {
@@ -171,6 +163,7 @@ export default function PartidoVivo() {
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido?.equipo_visitante_id).length
 
   async function toggleTitular(jugadorId, equipoId) {
+    if (partido.jugado) return toast.error('El acta ya está finalizada')
     const { habilitado, motivo } = evaluarJugador(jugadorId)
     if (!habilitado) return toast.error(`No se puede habilitar: ${motivo}`)
     const insc = planillaLocal.find(pl => pl.jugador_id === jugadorId && pl.equipo_id === equipoId)
@@ -182,7 +175,7 @@ export default function PartidoVivo() {
   }
 
   async function registrarEvento(tipo, causa = null) {
-    if (!jugadorSeleccionado) return
+    if (!jugadorSeleccionado || partido.jugado) return
     const minutoStr = prompt(`Ingrese el minuto:`, "1")
     if (minutoStr === null) return 
     const minuto = parseInt(minutoStr) || 0
@@ -205,7 +198,7 @@ export default function PartidoVivo() {
   }
 
   async function registrarFalta() {
-    if (!jugadorSeleccionado) return
+    if (!jugadorSeleccionado || partido.jugado) return
     const minutoStr = prompt(`Ingrese el minuto de la falta:`, "1")
     if (minutoStr === null) return 
     const minuto = parseInt(minutoStr) || 0
@@ -222,7 +215,7 @@ export default function PartidoVivo() {
       const faltaId = await db.faltas.add(nuevaFalta)
       setFaltas(prev => [...prev, { ...nuevaFalta, id: faltaId }])
       
-      const faltasJugador = faltas.filter(f => f.jugador_id === jugadorSeleccionado.jugador.id && Number(f.periodo) === periodoActual).length + 1
+      const faltasJugador = faltas.filter(f => f.jugador_id === jugadorSeleccionado.jugador.id && isMismoPeriodo(f)).length + 1
       if (faltasJugador === 5) {
         toast.error('¡5ta Falta Personal! El jugador debe ser expulsado.', { duration: 5000 })
       }
@@ -295,7 +288,7 @@ export default function PartidoVivo() {
     }
   }
 
-  // ============ GENERAR PDF OFICIAL ============
+  // ============ GENERAR PDF OFICIAL CORREGIDO ============
   function descargarPDF() {
     try {
       const doc = new jsPDF()
@@ -439,8 +432,14 @@ export default function PartidoVivo() {
       const fCapVisitante = firmas.find(f => f.tipo_firmante === 'visitante')
       const fVocal = firmas.find(f => f.tipo_firmante === 'vocal')
 
-      if (fCapLocal?.firma_base64) doc.addImage(fCapLocal.firma_base64, 'PNG', 20, firmaY - 20, 40, 20)
-      if (fCapVisitante?.firma_base64) doc.addImage(fCapVisitante.firma_base64, 'PNG', 130, firmaY - 20, 40, 20)
+      // BLOQUES TRY/CATCH PARA LAS FIRMAS (Evita que falle si la imagen está corrupta)
+      try {
+        if (fCapLocal?.firma_base64) doc.addImage(fCapLocal.firma_base64, 'PNG', 20, firmaY - 20, 40, 20)
+      } catch (e) { console.error("Error en firma local", e) }
+
+      try {
+        if (fCapVisitante?.firma_base64) doc.addImage(fCapVisitante.firma_base64, 'PNG', 130, firmaY - 20, 40, 20)
+      } catch (e) { console.error("Error en firma visitante", e) }
 
       doc.line(15, firmaY, 65, firmaY)
       doc.line(135, firmaY, 185, firmaY)
@@ -450,8 +449,14 @@ export default function PartidoVivo() {
       doc.text(`CAPITÁN ${equipoVisitante?.nombre}`, 160, firmaY + 4, { align: 'center' })
 
       const firmaY2 = firmaY + 30
-      if (fArbitro?.firma_base64) doc.addImage(fArbitro.firma_base64, 'PNG', 50, firmaY2 - 20, 40, 20)
-      if (fVocal?.firma_base64) doc.addImage(fVocal.firma_base64, 'PNG', 120, firmaY2 - 20, 40, 20)
+      
+      try {
+        if (fArbitro?.firma_base64) doc.addImage(fArbitro.firma_base64, 'PNG', 50, firmaY2 - 20, 40, 20)
+      } catch (e) { console.error("Error en firma arbitro", e) }
+
+      try {
+        if (fVocal?.firma_base64) doc.addImage(fVocal.firma_base64, 'PNG', 120, firmaY2 - 20, 40, 20)
+      } catch (e) { console.error("Error en firma vocal", e) }
 
       doc.line(40, firmaY2, 100, firmaY2)
       doc.line(110, firmaY2, 170, firmaY2)
@@ -462,10 +467,14 @@ export default function PartidoVivo() {
       doc.text('VIVE EL FUTBOL SIN DROGAS Y SIN ALCOHOL', 15, 285)
       doc.text('CAMPEONATO 2026', 170, 285)
 
-      doc.save(`Acta_Oficial_${equipoLocal?.nombre}_vs_${equipoVisitante?.nombre}.pdf`)
+      // LIMPIAMOS EL NOMBRE DEL ARCHIVO DE CARACTERES ESPECIALES
+      const nombreLocal = equipoLocal?.nombre?.replace(/[^a-zA-Z0-9]/g, '') || 'Local';
+      const nombreVisitante = equipoVisitante?.nombre?.replace(/[^a-zA-Z0-9]/g, '') || 'Visitante';
+      doc.save(`Acta_${nombreLocal}_vs_${nombreVisitante}.pdf`)
+      
       toast.success('PDF Oficial descargado')
     } catch (err) {
-      console.error(err)
+      console.error("Error general en PDF:", err)
       toast.error('Error al generar PDF')
     }
   }
@@ -480,7 +489,14 @@ export default function PartidoVivo() {
     const flts = getFaltasJugador(j.id)
 
     return (
-      <div key={j.id} onClick={() => setJugadorSeleccionado({ jugador: j, equipoId, habilitado, motivo })} className={`p-3 flex justify-between items-center cursor-pointer transition-colors ${!habilitado ? 'bg-red-50 opacity-80' : titular ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-100'}`}>
+      <div 
+        key={j.id} 
+        onClick={() => {
+          if (partido.jugado) return toast.error('El acta ya está finalizada');
+          setJugadorSeleccionado({ jugador: j, equipoId, habilitado, motivo });
+        }} 
+        className={`p-3 flex justify-between items-center cursor-pointer transition-colors ${!habilitado ? 'bg-red-50 opacity-80' : titular ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-100'}`}
+      >
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-600 overflow-hidden relative">
              {!habilitado && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><Lock size={12} className="text-white"/></div>}
@@ -520,7 +536,6 @@ export default function PartidoVivo() {
 
       <main className="max-w-4xl mx-auto p-4 space-y-4">
         
-        {/* MARCADOR Y RELOJ */}
         <div className="bg-white rounded-lg shadow-md p-4">
           <div className="flex justify-between items-center text-gray-500 text-sm mb-2 px-4">
             <span className="flex items-center gap-1"><Clock size={14}/> {partido.hora?.slice(0,5)}</span>
@@ -539,8 +554,7 @@ export default function PartidoVivo() {
             </div>
           </div>
 
-          {/* RELOJ DE CONTROL (Solo si es futsala) */}
-          {esFutsala && (
+          {esFutsala && !partido.jugado && (
             <div className="mt-4 border-t pt-3 flex items-center justify-center gap-4">
               <div className="text-2xl font-mono font-bold text-liga-azul bg-gray-100 px-4 py-1 rounded-md">
                 {formatearTiempo(tiempoRestante)}
@@ -597,7 +611,7 @@ export default function PartidoVivo() {
       </main>
 
       {/* MODAL DE ACCIONES DEL JUGADOR */}
-      {jugadorSeleccionado && (
+      {jugadorSeleccionado && !partido.jugado && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center">
           <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl p-5 animate-in slide-in-from-bottom-5">
             <div className="flex justify-between items-center mb-4 pb-2 border-b">
@@ -638,7 +652,6 @@ export default function PartidoVivo() {
                 </button>
               )}
 
-              {/* AMARILLA CON MENÚ DE CAUSAS */}
               <div className="relative">
                 <select 
                   onChange={(e) => { if(e.target.value) registrarEvento('amarilla', e.target.value) }}
@@ -651,7 +664,6 @@ export default function PartidoVivo() {
                 </select>
               </div>
 
-              {/* ROJA CON MENÚ DE CAUSAS */}
               <div className="relative">
                 <select 
                   onChange={(e) => { if(e.target.value) registrarEvento('roja', e.target.value) }}
