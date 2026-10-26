@@ -4,6 +4,7 @@ import { db } from './db'
 export async function sincronizarPartido(partidoId) {
   const partido = await db.partidos.get(partidoId)
   const eventos = await db.eventos.where('partido_id').equals(partidoId).toArray()
+  const faltas = await db.faltas.where('partido_id').equals(partidoId).toArray()
   const firmas = await db.firmas.where('partido_id').equals(partidoId).toArray()
 
   if (!partido) throw new Error('Partido no encontrado en memoria')
@@ -31,29 +32,53 @@ export async function sincronizarPartido(partidoId) {
     actaId = nuevaActa.id
   }
 
-  // 2. Limpiar e Insertar los Eventos (Goles y Tarjetas)
+  // 2. Limpiar datos viejos en Supabase (por si se sincroniza varias veces)
   await supabase.from('goles').delete().eq('partido_id', partidoId)
   await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
+  await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
 
+  // 3. Sincronizar FALTAS (Primero las faltas, para que los triggers actúen)
+  for (const f of faltas) {
+    await supabase.from('faltas_partido').insert({
+      partido_id: partidoId,
+      jugador_id: f.jugador_id,
+      equipo_id: f.equipo_id,
+      tipo: f.tipo,
+      periodo: f.periodo,
+      minuto: f.minuto
+    })
+    await db.faltas.update(f.id, { sync_status: 'synced' }) // Si añadiste sync_status a la tabla faltas local
+  }
+
+  // 4. Sincronizar EVENTOS (Goles y Tarjetas con sus causas)
   for (const ev of eventos) {
     if (ev.tipo === 'gol') {
       await supabase.from('goles').insert({
-        partido_id: partidoId, jugador_id: ev.jugador_id, minuto: ev.minuto, tipo: 'normal'
+        partido_id: partidoId, 
+        jugador_id: ev.jugador_id, 
+        minuto: ev.minuto, 
+        tipo: 'normal'
       })
     } else if (ev.tipo === 'amarilla' || ev.tipo === 'roja') {
       const { data: pData } = await supabase.from('partidos').select('fecha_id, fechas(etapa_id)').eq('id', partidoId).single()
       const etapaId = pData?.fechas?.etapa_id
 
       await supabase.from('sanciones_jugador').insert({
-        jugador_id: ev.jugador_id, equipo_id: ev.equipo_id, partido_id: partidoId,
-        etapa_id: etapaId, tipo: ev.tipo, motivo: 'Registrado en cancha', fechas_sancion: ev.tipo === 'roja' ? 1 : 0,
-        fechas_cumplidas: 0, activa: true
+        jugador_id: ev.jugador_id, 
+        equipo_id: ev.equipo_id, 
+        partido_id: partidoId,
+        etapa_id: etapaId, 
+        tipo: ev.tipo, 
+        motivo: ev.causa || 'No especificada', // <-- GUARDAMOS LA CAUSA AQUÍ
+        fechas_sancion: ev.tipo === 'roja' ? 1 : 0,
+        fechas_cumplidas: 0, 
+        activa: true
       })
     }
     await db.eventos.update(ev.id, { sync_status: 'synced' })
   }
 
-  // 3. ACTUALIZAR EL PARTIDO (Antes de las firmas, por si fallan)
+  // 5. Actualizar el estado del PARTIDO
   const { error: errPartido } = await supabase.from('partidos').update({
     jugado: true,
     goles_local: golesLocal,
@@ -63,7 +88,7 @@ export async function sincronizarPartido(partidoId) {
 
   if (errPartido) throw new Error('Error actualizando partido: ' + errPartido.message)
 
-  // 4. Insertar Firmas (Traduciendo 'local' a 'capitan_local')
+  // 6. Sincronizar FIRMAS
   for (const f of firmas) {
     let tipoValido = f.tipo_firmante
     if (tipoValido === 'local') tipoValido = 'capitan_local'
