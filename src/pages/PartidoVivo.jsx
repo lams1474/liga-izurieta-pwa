@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { db } from '../lib/db'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Clock, MapPin, Shield, User, X, Circle, CheckCircle, Lock, Printer, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Clock, MapPin, Shield, User, X, Circle, CheckCircle, Lock, Printer, AlertTriangle, Play, Pause, RotateCcw } from 'lucide-react'
 import { sincronizarPartido } from '../lib/sincronizarPartido'
 import FirmaModal from '../components/FirmaModal'
 import jsPDF from 'jspdf'
@@ -25,7 +25,7 @@ export default function PartidoVivo() {
   const [jugadoresLocal, setJugadoresLocal] = useState([])
   const [jugadoresVisitante, setJugadoresVisitante] = useState([])
   const [eventos, setEventos] = useState([])
-  const [faltas, setFaltas] = useState([]) // NUEVO ESTADO
+  const [faltas, setFaltas] = useState([]) 
   const [planillaLocal, setPlanillaLocal] = useState([])
   
   const [carnets, setCarnets] = useState([])
@@ -39,6 +39,35 @@ export default function PartidoVivo() {
   const [firmasTemporales, setFirmasTemporales] = useState([])
   const [novedadesGenerales, setNovedadesGenerales] = useState('')
 
+  // === ESTADOS PARA EL RELOJ Y PERIODOS ===
+  const [periodoActual, setPeriodoActual] = useState(1)
+  const [tiempoRestante, setTiempoRestante] = useState(22 * 60)
+  const [relojCorriendo, setRelojCorriendo] = useState(false)
+
+  // EFECTO CORREGIDO DEL CRONÓMETRO
+  useEffect(() => {
+    let intervalo = null
+    
+    if (relojCorriendo) {
+      intervalo = setInterval(() => {
+        setTiempoRestante(prev => {
+          if (prev <= 1) {
+            clearInterval(intervalo)
+            // Usamos setTimeout para evitar el error de setState síncrono en el effect
+            setTimeout(() => {
+              setRelojCorriendo(false)
+              toast.error('¡Tiempo finalizado!', { icon: '⏱️' })
+            }, 0)
+            return 0
+          }
+          return prev - 1
+        })
+      }, 1000)
+    }
+    
+    return () => clearInterval(intervalo)
+  }, [relojCorriendo]) // Solo depende de si está corriendo o no, no de los segundos
+
   useEffect(() => {
     async function cargarDatosOffline() {
       try {
@@ -49,7 +78,6 @@ export default function PartidoVivo() {
         if (!p) { setCargando(false); return }
         setPartido(p)
 
-        // Saber si es futsala o futbol
         const { data: pData } = await supabase.from('partidos').select('fecha:fechas(etapa:etapas(disciplina))').eq('id', id).single()
         const disciplina = pData?.fecha?.etapa?.disciplina
         setEsFutsala(disciplina === 'futsala')
@@ -77,7 +105,6 @@ export default function PartidoVivo() {
         const evs = await db.eventos.where('partido_id').equals(id).toArray()
         setEventos(evs)
 
-        // Cargar faltas
         const flts = await db.faltas.where('partido_id').equals(id).toArray()
         setFaltas(flts)
 
@@ -98,6 +125,30 @@ export default function PartidoVivo() {
     cargarDatosOffline()
   }, [id])
 
+  // === CONTROLES DEL RELOJ Y PERIODOS ===
+  const toggleReloj = () => setRelojCorriendo(!relojCorriendo)
+  
+  const reiniciarReloj = () => {
+    setRelojCorriendo(false)
+    setTiempoRestante(22 * 60)
+  }
+
+  const pasarSegundoTiempo = () => {
+    if (periodoActual === 2) return
+    if (window.confirm("¿Iniciar el segundo tiempo? Las faltas acumulativas se reiniciarán.")) {
+      setPeriodoActual(2)
+      setRelojCorriendo(false)
+      setTiempoRestante(22 * 60)
+      toast.success('Segundo tiempo iniciado. Faltas acumulativas reiniciadas.', { icon: '⚽' })
+    }
+  }
+
+  const formatearTiempo = (segundos) => {
+    const m = Math.floor(segundos / 60).toString().padStart(2, '0')
+    const s = (segundos % 60).toString().padStart(2, '0')
+    return `${m}:${s}`
+  }
+
   const evaluarJugador = (jugadorId) => {
     const carnetsJugador = carnets.filter(c => c.jugador_id === jugadorId)
     if (carnetsJugador.length === 0) return { habilitado: false, motivo: 'Sin carnet registrado' }
@@ -111,12 +162,11 @@ export default function PartidoVivo() {
   const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido?.equipo_local_id).length
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido?.equipo_visitante_id).length
   
-  // Contadores de faltas acumulativas por equipo
-  const faltasEqLocal = faltas.filter(f => f.equipo_id === partido?.equipo_local_id).length
-  const faltasEqVisitante = faltas.filter(f => f.equipo_id === partido?.equipo_visitante_id).length
+  const faltasEqLocal = faltas.filter(f => f.equipo_id === partido?.equipo_local_id && f.periodo === periodoActual).length
+  const faltasEqVisitante = faltas.filter(f => f.equipo_id === partido?.equipo_visitante_id && f.periodo === periodoActual).length
 
   const getEventosJugador = (jugadorId) => eventos.filter(e => e.jugador_id === jugadorId)
-  const getFaltasJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId)
+  const getFaltasJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId && f.periodo === periodoActual)
   const esTitular = (jugadorId, equipoId) => planillaLocal.find(pl => pl.jugador_id === jugadorId && pl.equipo_id === equipoId)?.es_titular || false
 
   async function toggleTitular(jugadorId, equipoId) {
@@ -140,7 +190,7 @@ export default function PartidoVivo() {
       const nuevoEvento = {
         partido_id: id, tipo, jugador_id: jugadorSeleccionado.jugador.id,
         equipo_id: jugadorSeleccionado.equipoId, minuto, sync_status: 'pending',
-        causa: causa // Guardamos la causa
+        causa: causa 
       }
       const eventId = await db.eventos.add(nuevoEvento)
       setEventos(prev => [...prev, { ...nuevoEvento, id: eventId }])
@@ -165,10 +215,17 @@ export default function PartidoVivo() {
         jugador_id: jugadorSeleccionado.jugador.id,
         equipo_id: jugadorSeleccionado.equipoId,
         tipo: 'personal',
+        periodo: periodoActual,
         minuto: minuto
       }
       const faltaId = await db.faltas.add(nuevaFalta)
       setFaltas(prev => [...prev, { ...nuevaFalta, id: faltaId }])
+      
+      const faltasJugador = faltas.filter(f => f.jugador_id === jugadorSeleccionado.jugador.id && f.periodo === periodoActual).length + 1
+      if (faltasJugador === 5) {
+        toast.error('¡5ta Falta Personal! El jugador debe ser expulsado.', { duration: 5000 })
+      }
+
       toast.success('Falta registrada')
     } catch (err) {
       console.error(err)
@@ -180,6 +237,7 @@ export default function PartidoVivo() {
 
   function iniciarCierre() {
     if (!window.confirm("¿Deseas finalizar el partido? Se procederá a firmar el acta.")) return
+    setRelojCorriendo(false)
     setFirmasTemporales([])
     setNovedadesGenerales('')
     setPasoFirma('local')
@@ -431,7 +489,7 @@ export default function PartidoVivo() {
             <p className="font-semibold text-sm text-gray-800 flex items-center gap-1">
               {j.apellidos} {titular && habilitado && <CheckCircle size={12} className="text-green-600" />}
             </p>
-            <p className="text-xs text-gray-500">{j.nombres} {flts.length > 0 && `(Faltas: ${flts.length})`}</p>
+            <p className="text-xs text-gray-500">{j.nombres} {flts.length > 0 && <span className="text-orange-500 font-bold">(Faltas: {flts.length})</span>}</p>
           </div>
         </div>
         <div className="flex gap-1 items-center">
@@ -455,27 +513,50 @@ export default function PartidoVivo() {
         </button>
         <div>
           <h1 className="font-bold">Partido en Vivo</h1>
-          <p className="text-xs text-liga-amarillo capitalize">Sesión: {rolUsuario} {esFutsala && '(Futsala)'}</p>
+          <p className="text-xs text-liga-amarillo capitalize">Sesión: {rolUsuario} {esFutsala && `(Futsala - Periodo ${periodoActual})`}</p>
         </div>
       </header>
 
       <main className="max-w-4xl mx-auto p-4 space-y-4">
-        <div className="bg-white rounded-lg shadow-md p-4 text-center">
+        
+        {/* MARCADOR Y RELOJ */}
+        <div className="bg-white rounded-lg shadow-md p-4">
           <div className="flex justify-between items-center text-gray-500 text-sm mb-2 px-4">
             <span className="flex items-center gap-1"><Clock size={14}/> {partido.hora?.slice(0,5)}</span>
             <span className="flex items-center gap-1"><MapPin size={14}/> {partido.cancha}</span>
           </div>
+          
           <div className="flex justify-between items-center mt-4">
             <div className="flex-1 text-right pr-4">
               <p className="text-lg font-bold text-gray-800 leading-tight">{equipoLocal?.nombre}</p>
-              {esFutsala && <p className="text-xs text-red-500 font-semibold">Faltas Eq: {faltasEqLocal} / 6</p>}
+              {esFutsala && <p className="text-xs text-red-500 font-semibold">Faltas Eq ({periodoActual}T): {faltasEqLocal} / 6</p>}
             </div>
             <div className="bg-gray-800 px-6 py-3 rounded-lg text-4xl font-black text-white shadow-inner">{golesLocal} - {golesVisitante}</div>
             <div className="flex-1 text-left pl-4">
               <p className="text-lg font-bold text-gray-800 leading-tight">{equipoVisitante?.nombre}</p>
-              {esFutsala && <p className="text-xs text-red-500 font-semibold">Faltas Eq: {faltasEqVisitante} / 6</p>}
+              {esFutsala && <p className="text-xs text-red-500 font-semibold">Faltas Eq ({periodoActual}T): {faltasEqVisitante} / 6</p>}
             </div>
           </div>
+
+          {/* RELOJ DE CONTROL (Solo si es futsala) */}
+          {esFutsala && (
+            <div className="mt-4 border-t pt-3 flex items-center justify-center gap-4">
+              <div className="text-2xl font-mono font-bold text-liga-azul bg-gray-100 px-4 py-1 rounded-md">
+                {formatearTiempo(tiempoRestante)}
+              </div>
+              <button onClick={toggleReloj} className={`p-2 rounded-full text-white ${relojCorriendo ? 'bg-red-500' : 'bg-green-500'}`}>
+                {relojCorriendo ? <Pause size={20} /> : <Play size={20} />}
+              </button>
+              <button onClick={reiniciarReloj} className="p-2 rounded-full bg-gray-500 text-white">
+                <RotateCcw size={20} />
+              </button>
+              {periodoActual === 1 && (
+                <button onClick={pasarSegundoTiempo} className="text-xs bg-liga-amarillo text-black font-bold px-3 py-1 rounded shadow">
+                  Iniciar 2do Tiempo
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -552,7 +633,7 @@ export default function PartidoVivo() {
 
               {esFutsala && (
                 <button onClick={registrarFalta} disabled={!jugadorSeleccionado.habilitado} className="bg-orange-500 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-                  <AlertTriangle size={20} /> Registrar Falta
+                  <AlertTriangle size={20} /> Registrar Falta ({periodoActual}T)
                 </button>
               )}
 
