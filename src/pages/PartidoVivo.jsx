@@ -3,11 +3,13 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { db } from '../lib/db'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Clock, MapPin, Shield, User, X, Circle, CheckCircle, Lock, Printer } from 'lucide-react'
+import { ArrowLeft, Clock, MapPin, Shield, User, X, Circle, CheckCircle, Lock, Printer, AlertTriangle } from 'lucide-react'
 import { sincronizarPartido } from '../lib/sincronizarPartido'
 import FirmaModal from '../components/FirmaModal'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+
+const CAUSAS_COMUNES = ['Juego brusco', 'Protestas', 'Agresión', 'Demorar el juego', 'Insultos al árbitro'];
 
 export default function PartidoVivo() {
   const { id } = useParams()
@@ -18,10 +20,12 @@ export default function PartidoVivo() {
   const [equipoLocal, setEquipoLocal] = useState(null)
   const [equipoVisitante, setEquipoVisitante] = useState(null)
   const [rolUsuario, setRolUsuario] = useState(null)
+  const [esFutsala, setEsFutsala] = useState(false)
 
   const [jugadoresLocal, setJugadoresLocal] = useState([])
   const [jugadoresVisitante, setJugadoresVisitante] = useState([])
   const [eventos, setEventos] = useState([])
+  const [faltas, setFaltas] = useState([]) // NUEVO ESTADO
   const [planillaLocal, setPlanillaLocal] = useState([])
   
   const [carnets, setCarnets] = useState([])
@@ -45,6 +49,11 @@ export default function PartidoVivo() {
         if (!p) { setCargando(false); return }
         setPartido(p)
 
+        // Saber si es futsala o futbol
+        const { data: pData } = await supabase.from('partidos').select('fecha:fechas(etapa:etapas(disciplina))').eq('id', id).single()
+        const disciplina = pData?.fecha?.etapa?.disciplina
+        setEsFutsala(disciplina === 'futsala')
+
         if (p.vocal_id === userId) setRolUsuario('vocal')
         else setRolUsuario('arbitro')
 
@@ -67,6 +76,10 @@ export default function PartidoVivo() {
 
         const evs = await db.eventos.where('partido_id').equals(id).toArray()
         setEventos(evs)
+
+        // Cargar faltas
+        const flts = await db.faltas.where('partido_id').equals(id).toArray()
+        setFaltas(flts)
 
         const f = await db.firmas.where('partido_id').equals(id).toArray()
         setFirmas(f)
@@ -97,7 +110,13 @@ export default function PartidoVivo() {
 
   const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido?.equipo_local_id).length
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido?.equipo_visitante_id).length
+  
+  // Contadores de faltas acumulativas por equipo
+  const faltasEqLocal = faltas.filter(f => f.equipo_id === partido?.equipo_local_id).length
+  const faltasEqVisitante = faltas.filter(f => f.equipo_id === partido?.equipo_visitante_id).length
+
   const getEventosJugador = (jugadorId) => eventos.filter(e => e.jugador_id === jugadorId)
+  const getFaltasJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId)
   const esTitular = (jugadorId, equipoId) => planillaLocal.find(pl => pl.jugador_id === jugadorId && pl.equipo_id === equipoId)?.es_titular || false
 
   async function toggleTitular(jugadorId, equipoId) {
@@ -111,16 +130,17 @@ export default function PartidoVivo() {
     toast.success(nuevoEstado ? 'Marcado como Titular' : 'Marcado como Suplente')
   }
 
-  async function registrarEvento(tipo) {
+  async function registrarEvento(tipo, causa = null) {
     if (!jugadorSeleccionado) return
-    const minutoStr = prompt(`Ingrese el minuto (1-90):`, "1")
+    const minutoStr = prompt(`Ingrese el minuto:`, "1")
     if (minutoStr === null) return 
     const minuto = parseInt(minutoStr) || 0
 
     try {
       const nuevoEvento = {
         partido_id: id, tipo, jugador_id: jugadorSeleccionado.jugador.id,
-        equipo_id: jugadorSeleccionado.equipoId, minuto, sync_status: 'pending'
+        equipo_id: jugadorSeleccionado.equipoId, minuto, sync_status: 'pending',
+        causa: causa // Guardamos la causa
       }
       const eventId = await db.eventos.add(nuevoEvento)
       setEventos(prev => [...prev, { ...nuevoEvento, id: eventId }])
@@ -128,6 +148,31 @@ export default function PartidoVivo() {
     } catch (err) {
       console.error(err)
       toast.error('Error al guardar evento')
+    } finally {
+      setJugadorSeleccionado(null)
+    }
+  }
+
+  async function registrarFalta() {
+    if (!jugadorSeleccionado) return
+    const minutoStr = prompt(`Ingrese el minuto de la falta:`, "1")
+    if (minutoStr === null) return 
+    const minuto = parseInt(minutoStr) || 0
+
+    try {
+      const nuevaFalta = {
+        partido_id: id,
+        jugador_id: jugadorSeleccionado.jugador.id,
+        equipo_id: jugadorSeleccionado.equipoId,
+        tipo: 'personal',
+        minuto: minuto
+      }
+      const faltaId = await db.faltas.add(nuevaFalta)
+      setFaltas(prev => [...prev, { ...nuevaFalta, id: faltaId }])
+      toast.success('Falta registrada')
+    } catch (err) {
+      console.error(err)
+      toast.error('Error al guardar falta')
     } finally {
       setJugadorSeleccionado(null)
     }
@@ -157,7 +202,6 @@ export default function PartidoVivo() {
   async function ejecutarFinalizacion(firmasFinales, textoNovedades) {
     setFinalizando(true)
     try {
-      // AQUI AGREGAMOS ESTO: Borrar firmas viejas de la base local antes de guardar las nuevas
       await db.firmas.where('partido_id').equals(id).delete()
 
       for (const f of firmasFinales) {
@@ -166,6 +210,7 @@ export default function PartidoVivo() {
           de_acuerdo: f.deAcuerdo, motivo_desacuerdo: f.motivo, sync_status: 'pending'
         })
       }
+      
       const firmasActualizadas = await db.firmas.where('partido_id').equals(id).toArray()
       setFirmas(firmasActualizadas)
 
@@ -175,12 +220,12 @@ export default function PartidoVivo() {
       }
 
       if (navigator.onLine) {
-        toast.loading('Sincronizando acta con la nube...', { id: 'sync' })
+        toast.loading('Sincronizando acta...', { id: 'sync' })
         await sincronizarPartido(id)
         toast.success('Acta sincronizada', { id: 'sync' })
       } else {
         await db.partidos.update(id, { jugado: true, sincronizado: false })
-        toast.success('Acta cerrada offline. Se sincronizará luego.', { icon: '📡' })
+        toast.success('Acta cerrada offline', { icon: '📡' })
       }
       setPartido(prev => ({ ...prev, jugado: true }))
     } catch (error) {
@@ -191,7 +236,7 @@ export default function PartidoVivo() {
     }
   }
 
-  // ============ GENERAR PDF OFICIAL (IGUAL AL ADMIN) ============
+  // ============ GENERAR PDF OFICIAL ============
   function descargarPDF() {
     try {
       const doc = new jsPDF()
@@ -212,7 +257,6 @@ export default function PartidoVivo() {
         doc.text(`ACTA DE JUEGO - PÁGINA ${pagina}`, 105, 35, { align: 'center' })
       }
 
-      // PÁGINA 1: PLANILLA
       dibujarEncabezado(1)
       doc.setFontSize(9)
       doc.setFont("helvetica", "normal")
@@ -223,7 +267,6 @@ export default function PartidoVivo() {
       doc.text(`FECHA: ${fechaStr}`, 145, 45)
       doc.text(`HORA: ${p.hora?.slice(0,5) || '________'}`, 15, 51)
 
-      // TABLA EQUIPO LOCAL
       doc.setFont("helvetica", "bold")
       doc.text(`CLUB: ${equipoLocal?.nombre?.toUpperCase()}`, 15, 60)
       doc.text(`CATEGORÍA: ${equipoLocal?.categoria?.toUpperCase() || ''}`, 100, 60)
@@ -245,7 +288,6 @@ export default function PartidoVivo() {
         columnStyles: { 0: { cellWidth: 15, halign: 'center' }, 1: { cellWidth: 110 }, 2: { cellWidth: 15, halign: 'center' }, 3: { cellWidth: 15, halign: 'center' }, 4: { cellWidth: 15, halign: 'center' } }
       })
 
-      // TABLA EQUIPO VISITANTE
       let finalY = doc.lastAutoTable.finalY + 10
       doc.setFont("helvetica", "bold")
       doc.text(`CLUB: ${equipoVisitante?.nombre?.toUpperCase()}`, 15, finalY)
@@ -268,7 +310,6 @@ export default function PartidoVivo() {
         columnStyles: { 0: { cellWidth: 15, halign: 'center' }, 1: { cellWidth: 110 }, 2: { cellWidth: 15, halign: 'center' }, 3: { cellWidth: 15, halign: 'center' }, 4: { cellWidth: 15, halign: 'center' } }
       })
 
-      // PÁGINA 2: TARJETAS Y FIRMAS
       doc.addPage()
       dibujarEncabezado(2)
       doc.setFontSize(9)
@@ -293,8 +334,12 @@ export default function PartidoVivo() {
         for(let i=0; i<6; i++) {
           doc.text(`NO. ______`, 15, yAmarillas + (i*6))
           doc.line(35, yAmarillas + (i*6), 130, yAmarillas + (i*6))
-          if (amarillas[i]) doc.text(amarillas[i].jugador, 37, yAmarillas + (i*6) - 1)
-          doc.text(`POR: ________________`, 135, yAmarillas + (i*6))
+          if (amarillas[i]) {
+            doc.text(amarillas[i].jugador, 37, yAmarillas + (i*6) - 1)
+            doc.text(`POR: ${amarillas[i].causa || '______'}`, 135, yAmarillas + (i*6))
+          } else {
+            doc.text(`POR: ________________`, 135, yAmarillas + (i*6))
+          }
         }
 
         doc.setFont("helvetica", "bold")
@@ -305,8 +350,12 @@ export default function PartidoVivo() {
         for(let i=0; i<4; i++) {
           doc.text(`NO. ______`, 15, yRojas + (i*6))
           doc.line(35, yRojas + (i*6), 130, yRojas + (i*6))
-          if (rojas[i]) doc.text(rojas[i].jugador, 37, yRojas + (i*6) - 1)
-          doc.text(`POR: ________________`, 135, yRojas + (i*6))
+          if (rojas[i]) {
+            doc.text(rojas[i].jugador, 37, yRojas + (i*6) - 1)
+            doc.text(`POR: ${rojas[i].causa || '______'}`, 135, yRojas + (i*6))
+          } else {
+            doc.text(`POR: ________________`, 135, yRojas + (i*6))
+          }
         }
         return yRojas + 30
       }
@@ -325,7 +374,6 @@ export default function PartidoVivo() {
         doc.line(15, lineY + (i*8), 195, lineY + (i*8))
       }
 
-      // FIRMAS
       const firmaY = Math.min(lineY + 50, 220)
       const fArbitro = firmas.find(f => f.tipo_firmante === 'arbitro')
       const fCapLocal = firmas.find(f => f.tipo_firmante === 'local')
@@ -370,6 +418,7 @@ export default function PartidoVivo() {
     const { habilitado, motivo } = evaluarJugador(j.id)
     const titular = esTitular(j.id, equipoId)
     const evs = getEventosJugador(j.id)
+    const flts = getFaltasJugador(j.id)
 
     return (
       <div key={j.id} onClick={() => setJugadorSeleccionado({ jugador: j, equipoId, habilitado, motivo })} className={`p-3 flex justify-between items-center cursor-pointer transition-colors ${!habilitado ? 'bg-red-50 opacity-80' : titular ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-100'}`}>
@@ -382,7 +431,7 @@ export default function PartidoVivo() {
             <p className="font-semibold text-sm text-gray-800 flex items-center gap-1">
               {j.apellidos} {titular && habilitado && <CheckCircle size={12} className="text-green-600" />}
             </p>
-            <p className="text-xs text-gray-500">{j.nombres}</p>
+            <p className="text-xs text-gray-500">{j.nombres} {flts.length > 0 && `(Faltas: ${flts.length})`}</p>
           </div>
         </div>
         <div className="flex gap-1 items-center">
@@ -406,7 +455,7 @@ export default function PartidoVivo() {
         </button>
         <div>
           <h1 className="font-bold">Partido en Vivo</h1>
-          <p className="text-xs text-liga-amarillo capitalize">Sesión: {rolUsuario}</p>
+          <p className="text-xs text-liga-amarillo capitalize">Sesión: {rolUsuario} {esFutsala && '(Futsala)'}</p>
         </div>
       </header>
 
@@ -417,9 +466,15 @@ export default function PartidoVivo() {
             <span className="flex items-center gap-1"><MapPin size={14}/> {partido.cancha}</span>
           </div>
           <div className="flex justify-between items-center mt-4">
-            <div className="flex-1 text-right pr-4"><p className="text-lg font-bold text-gray-800 leading-tight">{equipoLocal?.nombre}</p></div>
+            <div className="flex-1 text-right pr-4">
+              <p className="text-lg font-bold text-gray-800 leading-tight">{equipoLocal?.nombre}</p>
+              {esFutsala && <p className="text-xs text-red-500 font-semibold">Faltas Eq: {faltasEqLocal} / 6</p>}
+            </div>
             <div className="bg-gray-800 px-6 py-3 rounded-lg text-4xl font-black text-white shadow-inner">{golesLocal} - {golesVisitante}</div>
-            <div className="flex-1 text-left pl-4"><p className="text-lg font-bold text-gray-800 leading-tight">{equipoVisitante?.nombre}</p></div>
+            <div className="flex-1 text-left pl-4">
+              <p className="text-lg font-bold text-gray-800 leading-tight">{equipoVisitante?.nombre}</p>
+              {esFutsala && <p className="text-xs text-red-500 font-semibold">Faltas Eq: {faltasEqVisitante} / 6</p>}
+            </div>
           </div>
         </div>
 
@@ -459,6 +514,7 @@ export default function PartidoVivo() {
         </div>
       </main>
 
+      {/* MODAL DE ACCIONES DEL JUGADOR */}
       {jugadorSeleccionado && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center">
           <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl p-5 animate-in slide-in-from-bottom-5">
@@ -487,23 +543,45 @@ export default function PartidoVivo() {
               </div>
             )}
 
-            {rolUsuario === 'arbitro' && (
-               <div className="mb-4 text-center text-xs text-gray-500 bg-blue-50 p-2 rounded">
-                 La planilla es controlada por el Vocal.
-               </div>
-            )}
-
             <div className="grid grid-cols-1 gap-2 pt-2 border-t">
               <p className="text-xs text-center text-gray-500 mb-1">Registrar Evento:</p>
+              
               <button onClick={() => registrarEvento('gol')} disabled={!jugadorSeleccionado.habilitado} className="bg-green-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
                 <Circle size={20} className="fill-white" /> ¡GOL!
               </button>
-              <button onClick={() => registrarEvento('amarilla')} disabled={!jugadorSeleccionado.habilitado} className="bg-yellow-400 text-yellow-900 py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-                <div className="w-4 h-5 bg-yellow-900 rounded-sm"></div> Tarjeta Amarilla
-              </button>
-              <button onClick={() => registrarEvento('roja')} disabled={!jugadorSeleccionado.habilitado} className="bg-red-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-                <div className="w-4 h-5 bg-white rounded-sm"></div> Tarjeta Roja
-              </button>
+
+              {esFutsala && (
+                <button onClick={registrarFalta} disabled={!jugadorSeleccionado.habilitado} className="bg-orange-500 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+                  <AlertTriangle size={20} /> Registrar Falta
+                </button>
+              )}
+
+              {/* AMARILLA CON MENÚ DE CAUSAS */}
+              <div className="relative">
+                <select 
+                  onChange={(e) => { if(e.target.value) registrarEvento('amarilla', e.target.value) }}
+                  disabled={!jugadorSeleccionado.habilitado}
+                  className="w-full bg-yellow-400 text-yellow-900 py-3 rounded-lg font-bold appearance-none text-center cursor-pointer disabled:opacity-50"
+                >
+                  <option value="">🟨 Tarjeta Amarilla (Elegir Causa)</option>
+                  {CAUSAS_COMUNES.map(c => <option key={c} value={c}>{c}</option>)}
+                  <option value="Otra causa...">Otra causa...</option>
+                </select>
+              </div>
+
+              {/* ROJA CON MENÚ DE CAUSAS */}
+              <div className="relative">
+                <select 
+                  onChange={(e) => { if(e.target.value) registrarEvento('roja', e.target.value) }}
+                  disabled={!jugadorSeleccionado.habilitado}
+                  className="w-full bg-red-600 text-white py-3 rounded-lg font-bold appearance-none text-center cursor-pointer disabled:opacity-50"
+                >
+                  <option value="">🟥 Tarjeta Roja (Elegir Causa)</option>
+                  {CAUSAS_COMUNES.map(c => <option key={c} value={c}>{c}</option>)}
+                  <option value="Otra causa...">Otra causa...</option>
+                </select>
+              </div>
+
             </div>
           </div>
         </div>
