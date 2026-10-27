@@ -139,7 +139,6 @@ export default function PartidoVivo() {
     return `${m}:${s}`
   }
 
-  // Filtros de faltas robustos (si no tienen periodo, asumimos 1)
   const isMismoPeriodo = (f) => Number(f.periodo || 1) === Number(periodoActual)
   
   const faltasEqLocal = faltas.filter(f => f.equipo_id === partido?.equipo_local_id && isMismoPeriodo(f)).length
@@ -426,20 +425,30 @@ export default function PartidoVivo() {
         doc.line(15, lineY + (i*8), 195, lineY + (i*8))
       }
 
+      // === FIRMAS ===
       const firmaY = Math.min(lineY + 50, 220)
+      const firmaY2 = firmaY + 30 // <--- DEFINIDO ANTES DE USARSE
+      
       const fArbitro = firmas.find(f => f.tipo_firmante === 'arbitro')
       const fCapLocal = firmas.find(f => f.tipo_firmante === 'local')
       const fCapVisitante = firmas.find(f => f.tipo_firmante === 'visitante')
       const fVocal = firmas.find(f => f.tipo_firmante === 'vocal')
 
-      // BLOQUES TRY/CATCH PARA LAS FIRMAS (Evita que falle si la imagen está corrupta)
-      try {
-        if (fCapLocal?.firma_base64) doc.addImage(fCapLocal.firma_base64, 'PNG', 20, firmaY - 20, 40, 20)
-      } catch (e) { console.error("Error en firma local", e) }
+      // Función limpia de firmas
+      const drawImageSafely = (base64, x, y, w, h) => {
+        try {
+          if (!base64) return;
+          const cleanB64 = base64.includes(',') ? base64.split(',')[1] : base64;
+          doc.addImage(cleanB64, "png", x, y, w, h);
+        } catch (e) {
+          console.error("Error al dibujar firma en PDF", e);
+        }
+      };
 
-      try {
-        if (fCapVisitante?.firma_base64) doc.addImage(fCapVisitante.firma_base64, 'PNG', 130, firmaY - 20, 40, 20)
-      } catch (e) { console.error("Error en firma visitante", e) }
+      drawImageSafely(fCapLocal?.firma_base64, 20, firmaY - 20, 40, 20)
+      drawImageSafely(fCapVisitante?.firma_base64, 130, firmaY - 20, 40, 20)
+      drawImageSafely(fArbitro?.firma_base64, 50, firmaY2 - 20, 40, 20)
+      drawImageSafely(fVocal?.firma_base64, 120, firmaY2 - 20, 40, 20)
 
       doc.line(15, firmaY, 65, firmaY)
       doc.line(135, firmaY, 185, firmaY)
@@ -447,16 +456,6 @@ export default function PartidoVivo() {
       doc.setFont("helvetica", "bold")
       doc.text(`CAPITÁN ${equipoLocal?.nombre}`, 40, firmaY + 4, { align: 'center' })
       doc.text(`CAPITÁN ${equipoVisitante?.nombre}`, 160, firmaY + 4, { align: 'center' })
-
-      const firmaY2 = firmaY + 30
-      
-      try {
-        if (fArbitro?.firma_base64) doc.addImage(fArbitro.firma_base64, 'PNG', 50, firmaY2 - 20, 40, 20)
-      } catch (e) { console.error("Error en firma arbitro", e) }
-
-      try {
-        if (fVocal?.firma_base64) doc.addImage(fVocal.firma_base64, 'PNG', 120, firmaY2 - 20, 40, 20)
-      } catch (e) { console.error("Error en firma vocal", e) }
 
       doc.line(40, firmaY2, 100, firmaY2)
       doc.line(110, firmaY2, 170, firmaY2)
@@ -467,7 +466,6 @@ export default function PartidoVivo() {
       doc.text('VIVE EL FUTBOL SIN DROGAS Y SIN ALCOHOL', 15, 285)
       doc.text('CAMPEONATO 2026', 170, 285)
 
-      // LIMPIAMOS EL NOMBRE DEL ARCHIVO DE CARACTERES ESPECIALES
       const nombreLocal = equipoLocal?.nombre?.replace(/[^a-zA-Z0-9]/g, '') || 'Local';
       const nombreVisitante = equipoVisitante?.nombre?.replace(/[^a-zA-Z0-9]/g, '') || 'Visitante';
       doc.save(`Acta_${nombreLocal}_vs_${nombreVisitante}.pdf`)

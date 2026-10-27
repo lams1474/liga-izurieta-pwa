@@ -65,6 +65,7 @@ export default function Partidos() {
       await db.planilla.clear()
       await db.eventos.clear()
       await db.firmas.clear()
+      await db.faltas.clear()
       
       setPartidosLocales([])
       toast.success('Memoria limpiada correctamente')

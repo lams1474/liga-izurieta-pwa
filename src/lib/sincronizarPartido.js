@@ -12,7 +12,7 @@ export async function sincronizarPartido(partidoId) {
   const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_local_id).length
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_visitante_id).length
 
-  // 1. ACTUALIZAR EL PARTIDO PRIMERO (Para que pase a Historial pase lo que pase)
+  // 1. ACTUALIZAR EL PARTIDO PRIMERO
   const { error: errPartido } = await supabase.from('partidos').update({
     jugado: true,
     goles_local: golesLocal,
@@ -43,24 +43,24 @@ export async function sincronizarPartido(partidoId) {
       actaId = nuevaActa.id
     }
 
-    // 3. Limpiar datos viejos
+    // 3. Limpiar datos viejos para no duplicar (Si se sincroniza 2 veces)
     await supabase.from('goles').delete().eq('partido_id', partidoId)
     await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
     await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
 
-    // 4. Sincronizar FALTAS
+    // 4. Sincronizar FALTAS (Debe ir antes que las tarjetas para que el trigger de 5 faltas funcione)
     for (const f of faltas) {
       await supabase.from('faltas_partido').insert({
         partido_id: partidoId,
         jugador_id: f.jugador_id,
         equipo_id: f.equipo_id,
         tipo: f.tipo,
-        periodo: Number(f.periodo || 1), // Si no tiene periodo, asumimos 1
+        periodo: Number(f.periodo || 1), // Forzamos número
         minuto: f.minuto
       })
     }
 
-    // 5. Sincronizar EVENTOS
+    // 5. Sincronizar EVENTOS (Goles y Tarjetas con Causas)
     for (const ev of eventos) {
       if (ev.tipo === 'gol') {
         await supabase.from('goles').insert({
@@ -71,9 +71,15 @@ export async function sincronizarPartido(partidoId) {
         const etapaId = pData?.fechas?.etapa_id
 
         await supabase.from('sanciones_jugador').insert({
-          jugador_id: ev.jugador_id, equipo_id: ev.equipo_id, partido_id: partidoId,
-          etapa_id: etapaId, tipo: ev.tipo, motivo: ev.causa || 'No especificada',
-          fechas_sancion: ev.tipo === 'roja' ? 1 : 0, fechas_cumplidas: 0, activa: true
+          jugador_id: ev.jugador_id, 
+          equipo_id: ev.equipo_id, 
+          partido_id: partidoId,
+          etapa_id: etapaId, 
+          tipo: ev.tipo, 
+          motivo: ev.causa || 'No especificada', // <-- SE GUARDA LA CAUSA
+          fechas_sancion: ev.tipo === 'roja' ? 1 : 0,
+          fechas_cumplidas: 0, 
+          activa: true
         })
       }
     }
@@ -93,7 +99,6 @@ export async function sincronizarPartido(partidoId) {
 
   } catch (error) {
     console.error("Error en sincronización secundaria (faltas/eventos/firmas):", error)
-    // No lanzamos el error para que el partido quede como jugado y sincronizado localmente
   }
 
   await db.partidos.update(partidoId, { jugado: true, sincronizado: true, goles_local: golesLocal, goles_visitante: golesVisitante })
