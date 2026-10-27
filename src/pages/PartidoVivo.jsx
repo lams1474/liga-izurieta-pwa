@@ -295,10 +295,24 @@ export default function PartidoVivo() {
     try {
       const doc = new jsPDF()
       const p = partido
-      
+
       const sanitize = (str) => {
         if (!str) return '';
-        return String(str).replace(/[^a-zA-Z0-9 ]/g, '');
+        return String(str).trim();
+      }
+
+      const getDorsal = (jugadorId) => {
+        const pl = planillaLocal.find(item => item.jugador_id === jugadorId)
+        return pl?.dorsal ? String(pl.dorsal) : '-'
+      }
+
+      const todosLosJugadores = [...jugadoresLocal, ...jugadoresVisitante]
+      const getJugadorInfo = (jugadorId) => {
+        const j = todosLosJugadores.find(item => item.id === jugadorId)
+        const d = getDorsal(jugadorId)
+        const dorsalStr = d !== '-' ? d : ''
+        if (!j) return { dorsal: dorsalStr, nombreCompleto: '' }
+        return { dorsal: dorsalStr, nombreCompleto: `${j.apellidos} ${j.nombres}` }
       }
 
       const dibujarEncabezado = (pagina) => {
@@ -330,11 +344,12 @@ export default function PartidoVivo() {
       doc.text(`CLUB: ${sanitize(equipoLocal?.nombre?.toUpperCase())}`, 15, 60)
       doc.text(`CATEGORIA: ${sanitize(equipoLocal?.categoria?.toUpperCase())}`, 100, 60)
 
-      const filasLocal = jugadoresLocal.filter(j => planillaLocal.find(pl => pl.jugador_id === j.id)).map(j => {
+      const filasLocal = jugadoresLocal.filter(j => planillaLocal.some(pl => pl.jugador_id === j.id)).map(j => {
+        const dorsal = getDorsal(j.id)
         const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
         const amarillas = eventos.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
         const rojas = eventos.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [j.dorsal || '-', sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
+        return [dorsal, sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
       })
 
       autoTable(doc, {
@@ -352,11 +367,12 @@ export default function PartidoVivo() {
       doc.text(`CLUB: ${sanitize(equipoVisitante?.nombre?.toUpperCase())}`, 15, finalY)
       doc.text(`CATEGORIA: ${sanitize(equipoVisitante?.categoria?.toUpperCase())}`, 100, finalY)
 
-      const filasVisitante = jugadoresVisitante.filter(j => planillaLocal.find(pl => pl.jugador_id === j.id)).map(j => {
+      const filasVisitante = jugadoresVisitante.filter(j => planillaLocal.some(pl => pl.jugador_id === j.id)).map(j => {
+        const dorsal = getDorsal(j.id)
         const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
         const amarillas = eventos.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
         const rojas = eventos.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [j.dorsal || '-', sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
+        return [dorsal, sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
       })
 
       autoTable(doc, {
@@ -382,7 +398,7 @@ export default function PartidoVivo() {
 
       const dibujarSeccionTarjetas = (startY, nombreClub, tarjetas) => {
         doc.setFont("helvetica", "bold")
-        doc.text(`TARJETAS DEL CLUB: ${sanitize(nombreClub.toUpperCase())}`, 15, startY)
+        doc.text(`TARJETAS DEL CLUB: ${sanitize(nombreClub?.toUpperCase() || '')}`, 15, startY)
         let yAmarillas = startY + 6
         let yRojas = startY + 45
 
@@ -391,12 +407,16 @@ export default function PartidoVivo() {
         yAmarillas += 5
         const amarillas = tarjetas.filter(t => t.tipo === 'amarilla')
         for(let i=0; i<6; i++) {
-          doc.text(`NO. ______`, 15, yAmarillas + (i*6))
-          doc.line(35, yAmarillas + (i*6), 130, yAmarillas + (i*6))
-          if (amarillas[i]) {
-            doc.text(sanitize(amarillas[i].jugador), 37, yAmarillas + (i*6) - 1)
-            doc.text(`POR: ${sanitize(amarillas[i].causa || '______')}`, 135, yAmarillas + (i*6))
+          const card = amarillas[i]
+          if (card) {
+            const info = getJugadorInfo(card.jugador_id)
+            doc.text(`NO. ${info.dorsal || '___'}`, 15, yAmarillas + (i*6))
+            doc.line(35, yAmarillas + (i*6), 130, yAmarillas + (i*6))
+            doc.text(sanitize(info.nombreCompleto), 37, yAmarillas + (i*6) - 1)
+            doc.text(`POR: ${sanitize(card.causa || '______')}`, 135, yAmarillas + (i*6))
           } else {
+            doc.text(`NO. ______`, 15, yAmarillas + (i*6))
+            doc.line(35, yAmarillas + (i*6), 130, yAmarillas + (i*6))
             doc.text(`POR: ________________`, 135, yAmarillas + (i*6))
           }
         }
@@ -407,12 +427,16 @@ export default function PartidoVivo() {
         yRojas += 5
         const rojas = tarjetas.filter(t => t.tipo === 'roja')
         for(let i=0; i<4; i++) {
-          doc.text(`NO. ______`, 15, yRojas + (i*6))
-          doc.line(35, yRojas + (i*6), 130, yRojas + (i*6))
-          if (rojas[i]) {
-            doc.text(sanitize(rojas[i].jugador), 37, yRojas + (i*6) - 1)
-            doc.text(`POR: ${sanitize(rojas[i].causa || '______')}`, 135, yRojas + (i*6))
+          const card = rojas[i]
+          if (card) {
+            const info = getJugadorInfo(card.jugador_id)
+            doc.text(`NO. ${info.dorsal || '___'}`, 15, yRojas + (i*6))
+            doc.line(35, yRojas + (i*6), 130, yRojas + (i*6))
+            doc.text(sanitize(info.nombreCompleto), 37, yRojas + (i*6) - 1)
+            doc.text(`POR: ${sanitize(card.causa || '______')}`, 135, yRojas + (i*6))
           } else {
+            doc.text(`NO. ______`, 15, yRojas + (i*6))
+            doc.line(35, yRojas + (i*6), 130, yRojas + (i*6))
             doc.text(`POR: ________________`, 135, yRojas + (i*6))
           }
         }
