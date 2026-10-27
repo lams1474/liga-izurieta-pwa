@@ -146,7 +146,6 @@ export default function PartidoVivo() {
 
   const getEventosJugador = (jugadorId) => eventos.filter(e => e.jugador_id === jugadorId)
   
-  // Sumamos TODAS las faltas del jugador (sin importar el periodo) para saber si está expulsado
   const getFaltasTotalesJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId).length
   const getFaltasJugadorPeriodo = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId && isMismoPeriodo(f)).length
 
@@ -297,10 +296,9 @@ export default function PartidoVivo() {
       const doc = new jsPDF()
       const p = partido
       
-      // FUNCIÓN PARA LIMPIAR ACENTOS Y Ñ (Evita que el PDF salga en blanco)
-      const cleanText = (str) => {
+      const sanitize = (str) => {
         if (!str) return '';
-        return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        return String(str).replace(/[^a-zA-Z0-9 ]/g, '');
       }
 
       const dibujarEncabezado = (pagina) => {
@@ -329,14 +327,14 @@ export default function PartidoVivo() {
       doc.text(`HORA: ${p.hora?.slice(0,5) || '________'}`, 15, 51)
 
       doc.setFont("helvetica", "bold")
-      doc.text(`CLUB: ${cleanText(equipoLocal?.nombre?.toUpperCase())}`, 15, 60)
-      doc.text(`CATEGORIA: ${cleanText(equipoLocal?.categoria?.toUpperCase())}`, 100, 60)
+      doc.text(`CLUB: ${sanitize(equipoLocal?.nombre?.toUpperCase())}`, 15, 60)
+      doc.text(`CATEGORIA: ${sanitize(equipoLocal?.categoria?.toUpperCase())}`, 100, 60)
 
       const filasLocal = jugadoresLocal.filter(j => planillaLocal.find(pl => pl.jugador_id === j.id)).map(j => {
         const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
         const amarillas = eventos.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
         const rojas = eventos.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [j.dorsal || '-', cleanText(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
+        return [j.dorsal || '-', sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
       })
 
       autoTable(doc, {
@@ -351,14 +349,14 @@ export default function PartidoVivo() {
 
       let finalY = doc.lastAutoTable.finalY + 10
       doc.setFont("helvetica", "bold")
-      doc.text(`CLUB: ${cleanText(equipoVisitante?.nombre?.toUpperCase())}`, 15, finalY)
-      doc.text(`CATEGORIA: ${cleanText(equipoVisitante?.categoria?.toUpperCase())}`, 100, finalY)
+      doc.text(`CLUB: ${sanitize(equipoVisitante?.nombre?.toUpperCase())}`, 15, finalY)
+      doc.text(`CATEGORIA: ${sanitize(equipoVisitante?.categoria?.toUpperCase())}`, 100, finalY)
 
       const filasVisitante = jugadoresVisitante.filter(j => planillaLocal.find(pl => pl.jugador_id === j.id)).map(j => {
         const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
         const amarillas = eventos.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
         const rojas = eventos.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [j.dorsal || '-', cleanText(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
+        return [j.dorsal || '-', sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
       })
 
       autoTable(doc, {
@@ -384,7 +382,7 @@ export default function PartidoVivo() {
 
       const dibujarSeccionTarjetas = (startY, nombreClub, tarjetas) => {
         doc.setFont("helvetica", "bold")
-        doc.text(`TARJETAS DEL CLUB: ${cleanText(nombreClub.toUpperCase())}`, 15, startY)
+        doc.text(`TARJETAS DEL CLUB: ${sanitize(nombreClub.toUpperCase())}`, 15, startY)
         let yAmarillas = startY + 6
         let yRojas = startY + 45
 
@@ -396,8 +394,8 @@ export default function PartidoVivo() {
           doc.text(`NO. ______`, 15, yAmarillas + (i*6))
           doc.line(35, yAmarillas + (i*6), 130, yAmarillas + (i*6))
           if (amarillas[i]) {
-            doc.text(cleanText(amarillas[i].jugador), 37, yAmarillas + (i*6) - 1)
-            doc.text(`POR: ${cleanText(amarillas[i].causa || '______')}`, 135, yAmarillas + (i*6))
+            doc.text(sanitize(amarillas[i].jugador), 37, yAmarillas + (i*6) - 1)
+            doc.text(`POR: ${sanitize(amarillas[i].causa || '______')}`, 135, yAmarillas + (i*6))
           } else {
             doc.text(`POR: ________________`, 135, yAmarillas + (i*6))
           }
@@ -412,8 +410,8 @@ export default function PartidoVivo() {
           doc.text(`NO. ______`, 15, yRojas + (i*6))
           doc.line(35, yRojas + (i*6), 130, yRojas + (i*6))
           if (rojas[i]) {
-            doc.text(cleanText(rojas[i].jugador), 37, yRojas + (i*6) - 1)
-            doc.text(`POR: ${cleanText(rojas[i].causa || '______')}`, 135, yRojas + (i*6))
+            doc.text(sanitize(rojas[i].jugador), 37, yRojas + (i*6) - 1)
+            doc.text(`POR: ${sanitize(rojas[i].causa || '______')}`, 135, yRojas + (i*6))
           } else {
             doc.text(`POR: ________________`, 135, yRojas + (i*6))
           }
@@ -424,16 +422,14 @@ export default function PartidoVivo() {
       let nextY = dibujarSeccionTarjetas(55, equipoLocal?.nombre, tarjetasLocal)
       nextY = dibujarSeccionTarjetas(nextY, equipoVisitante?.nombre, tarjetasVisitante)
 
-      // SECCIÓN NOVEDADES SIN LÍNEAS
       doc.setFont("helvetica", "bold")
       doc.text('NOVEDADES:', 15, nextY)
       doc.setFont("helvetica", "normal")
-      const splitText = doc.splitTextToSize(cleanText(p.observaciones) || 'Sin novedades registradas.', 175)
+      const splitText = doc.splitTextToSize(sanitize(p.observaciones || 'Sin novedades registradas.'), 175)
       doc.text(splitText, 15, nextY + 6)
       
       let lineY = nextY + 6 + (splitText.length * 5) + 10
 
-      // FIRMAS EN UNA SOLA LÍNEA
       const firmaY = Math.min(lineY + 50, 240)
       
       const fArbitro = firmas.find(f => f.tipo_firmante === 'arbitro')
@@ -444,19 +440,18 @@ export default function PartidoVivo() {
       const drawImageSafely = (base64, x, y, w, h) => {
         try {
           if (!base64) return;
-          const cleanB64 = base64.includes(',') ? base64.split(',')[1] : base64;
+          const cleanB64 = base64.replace(/^data:image\/(png|jpeg|jpg);base64,/, '').replace(/\s/g, '');
           doc.addImage(cleanB64, "png", x, y, w, h, undefined, 'FAST');
         } catch (e) {
           console.error("Error al dibujar firma en PDF", e);
         }
       };
 
-      // Posiciones X para las 4 firmas
       const xPositions = [15, 65, 115, 165];
       const firmantes = [
-        { nombre: 'CAPITÁN LOCAL', firma: fCapLocal },
-        { nombre: 'CAPITÁN VISITANTE', firma: fCapVisitante },
-        { nombre: 'ÁRBITRO', firma: fArbitro },
+        { nombre: 'CAPITAN LOCAL', firma: fCapLocal },
+        { nombre: 'CAPITAN VISITANTE', firma: fCapVisitante },
+        { nombre: 'ARBITRO', firma: fArbitro },
         { nombre: 'VOCAL', firma: fVocal }
       ];
 
@@ -473,8 +468,8 @@ export default function PartidoVivo() {
       doc.text('VIVE EL FUTBOL SIN DROGAS Y SIN ALCOHOL', 15, 285)
       doc.text('CAMPEONATO 2026', 170, 285)
 
-      const nombreLocal = equipoLocal?.nombre?.replace(/[^a-zA-Z0-9]/g, '') || 'Local';
-      const nombreVisitante = equipoVisitante?.nombre?.replace(/[^a-zA-Z0-9]/g, '') || 'Visitante';
+      const nombreLocal = sanitize(equipoLocal?.nombre) || 'Local';
+      const nombreVisitante = sanitize(equipoVisitante?.nombre) || 'Visitante';
       
       const pdfBlob = doc.output('blob');
       const url = URL.createObjectURL(pdfBlob);
@@ -505,7 +500,6 @@ export default function PartidoVivo() {
     const faltasPeriodo = getFaltasJugadorPeriodo(j.id)
     const expulsadoPorFaltas = faltasTotales >= 5
     
-    // Si está expulsado, lo bloqueamos visualmente
     const bloqueado = !habilitado || expulsadoPorFaltas
     const motivoBloqueo = expulsadoPorFaltas ? 'Expulsado (5 faltas)' : motivo
 
@@ -530,7 +524,7 @@ export default function PartidoVivo() {
             </p>
             <p className="text-xs text-gray-500">
               {j.nombres} 
-              {faltasPeriodo > 0 && !expulsadoPorFaltas && <span className="text-orange-500 font-bold ml-1">(Faltas 1T: {faltasPeriodo})</span>}
+              {faltasPeriodo > 0 && !expulsadoPorFaltas && <span className="text-orange-500 font-bold ml-1">(Faltas: {faltasPeriodo})</span>}
             </p>
           </div>
         </div>
