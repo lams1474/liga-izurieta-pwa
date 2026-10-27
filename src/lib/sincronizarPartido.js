@@ -2,17 +2,20 @@ import { supabase } from './supabase'
 import { db } from './db'
 
 export async function sincronizarPartido(partidoId) {
+  console.log("🚀 Iniciando sincronización del partido:", partidoId)
+  
   const partido = await db.partidos.get(partidoId)
   const eventos = await db.eventos.where('partido_id').equals(partidoId).toArray()
   const faltas = await db.faltas.where('partido_id').equals(partidoId).toArray()
   const firmas = await db.firmas.where('partido_id').equals(partidoId).toArray()
 
-  if (!partido) throw new Error('Partido no encontrado en memoria')
+  if (!partido) throw new Error('Partido no encontrado en memoria local')
 
   const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_local_id).length
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_visitante_id).length
 
-  // 1. ACTUALIZAR EL PARTIDO PRIMERO
+  // 1. ACTUALIZAR EL PARTIDO EN SUPABASE (Prioridad Máxima)
+  console.log("1. Actualizando marcador y estado del partido...")
   const { error: errPartido } = await supabase.from('partidos').update({
     jugado: true,
     goles_local: golesLocal,
@@ -20,16 +23,19 @@ export async function sincronizarPartido(partidoId) {
     observaciones: partido.observaciones || null
   }).eq('id', partidoId)
 
-  if (errPartido) throw new Error('Error actualizando partido: ' + errPartido.message)
+  if (errPartido) {
+    console.error("❌ Error actualizando partido:", errPartido)
+    throw new Error('Error actualizando partido: ' + errPartido.message)
+  }
 
+  // 2. RESTO DE LA SINCRONIZACIÓN (En un bloque try/catch para que no detenga el proceso)
   try {
-    // 2. Crear o buscar el ACTA
+    console.log("2. Sincronizando acta...")
     let actaId;
     const { data: actaExistente } = await supabase.from('actas').select('id').eq('partido_id', partidoId).maybeSingle()
 
     if (actaExistente) {
       actaId = actaExistente.id
-      await supabase.from('firmas_acta').delete().eq('acta_id', actaId)
       await supabase.from('actas').update({ observaciones: partido.observaciones || null }).eq('id', actaId)
     } else {
       const { data: nuevaActa, error: errActa } = await supabase.from('actas').insert({
@@ -39,28 +45,15 @@ export async function sincronizarPartido(partidoId) {
         cerrada_en: new Date().toISOString()
       }).select().single()
 
-      if (errActa) throw new Error('Error creando acta: ' + errActa.message)
+      if (errActa) throw errActa
       actaId = nuevaActa.id
     }
 
-    // 3. Limpiar datos viejos para no duplicar (Si se sincroniza 2 veces)
+    console.log("3. Sincronizando goles y tarjetas...")
+    // Borramos registros previos de este partido para no duplicar si se sincroniza 2 veces
     await supabase.from('goles').delete().eq('partido_id', partidoId)
     await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
-    await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
 
-    // 4. Sincronizar FALTAS (Debe ir antes que las tarjetas para que el trigger de 5 faltas funcione)
-    for (const f of faltas) {
-      await supabase.from('faltas_partido').insert({
-        partido_id: partidoId,
-        jugador_id: f.jugador_id,
-        equipo_id: f.equipo_id,
-        tipo: f.tipo,
-        periodo: Number(f.periodo || 1), // Forzamos número
-        minuto: f.minuto
-      })
-    }
-
-    // 5. Sincronizar EVENTOS (Goles y Tarjetas con Causas)
     for (const ev of eventos) {
       if (ev.tipo === 'gol') {
         await supabase.from('goles').insert({
@@ -76,7 +69,7 @@ export async function sincronizarPartido(partidoId) {
           partido_id: partidoId,
           etapa_id: etapaId, 
           tipo: ev.tipo, 
-          motivo: ev.causa || 'No especificada', // <-- SE GUARDA LA CAUSA
+          motivo: ev.causa || 'No especificada',
           fechas_sancion: ev.tipo === 'roja' ? 1 : 0,
           fechas_cumplidas: 0, 
           activa: true
@@ -84,7 +77,21 @@ export async function sincronizarPartido(partidoId) {
       }
     }
 
-    // 6. Sincronizar FIRMAS
+    console.log("4. Sincronizando faltas...")
+    await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
+    for (const f of faltas) {
+      await supabase.from('faltas_partido').insert({
+        partido_id: partidoId,
+        jugador_id: f.jugador_id,
+        equipo_id: f.equipo_id,
+        tipo: f.tipo,
+        periodo: Number(f.periodo || 1),
+        minuto: f.minuto
+      })
+    }
+
+    console.log("5. Sincronizando firmas...")
+    await supabase.from('firmas_acta').delete().eq('acta_id', actaId)
     for (const f of firmas) {
       let tipoValido = f.tipo_firmante
       if (tipoValido === 'local') tipoValido = 'capitan_local'
@@ -97,11 +104,16 @@ export async function sincronizarPartido(partidoId) {
       })
     }
 
+    console.log("✅ Sincronización completada con éxito")
+
   } catch (error) {
-    console.error("Error en sincronización secundaria (faltas/eventos/firmas):", error)
+    // Si algo falla en los datos secundarios, el partido ya se marcó como jugado
+    console.error("⚠️ Error en sincronización secundaria:", error)
   }
 
+  // Actualizamos Dexie para marcar como sincronizado
   await db.partidos.update(partidoId, { jugado: true, sincronizado: true, goles_local: golesLocal, goles_visitante: golesVisitante })
+  
   return { golesLocal, golesVisitante }
 }
 
