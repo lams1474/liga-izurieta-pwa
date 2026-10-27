@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { db } from '../lib/db'
 import { supabase } from '../lib/supabase'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Clock, MapPin, Shield, User, X, Circle, CheckCircle, Lock, Printer, AlertTriangle, Play, Pause, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Clock, MapPin, Shield, User, X, Circle, CheckCircle, Lock, Printer, AlertTriangle, Play, Pause, RotateCcw, Ban } from 'lucide-react'
 import { sincronizarPartido } from '../lib/sincronizarPartido'
 import FirmaModal from '../components/FirmaModal'
 import jsPDF from 'jspdf'
@@ -145,7 +145,11 @@ export default function PartidoVivo() {
   const faltasEqVisitante = faltas.filter(f => f.equipo_id === partido?.equipo_visitante_id && isMismoPeriodo(f)).length
 
   const getEventosJugador = (jugadorId) => eventos.filter(e => e.jugador_id === jugadorId)
-  const getFaltasJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId && isMismoPeriodo(f))
+  
+  // Sumamos TODAS las faltas del jugador (sin importar el periodo) para saber si está expulsado
+  const getFaltasTotalesJugador = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId).length
+  const getFaltasJugadorPeriodo = (jugadorId) => faltas.filter(f => f.jugador_id === jugadorId && isMismoPeriodo(f)).length
+
   const esTitular = (jugadorId, equipoId) => planillaLocal.find(pl => pl.jugador_id === jugadorId && pl.equipo_id === equipoId)?.es_titular || false
 
   const evaluarJugador = (jugadorId) => {
@@ -214,12 +218,12 @@ export default function PartidoVivo() {
       const faltaId = await db.faltas.add(nuevaFalta)
       setFaltas(prev => [...prev, { ...nuevaFalta, id: faltaId }])
       
-      const faltasJugador = faltas.filter(f => f.jugador_id === jugadorSeleccionado.jugador.id && isMismoPeriodo(f)).length + 1
-      if (faltasJugador === 5) {
-        toast.error('¡5ta Falta Personal! El jugador debe ser expulsado.', { duration: 5000 })
+      const faltasTotales = faltas.filter(f => f.jugador_id === jugadorSeleccionado.jugador.id).length + 1
+      if (faltasTotales === 5) {
+        toast.error('¡5ta Falta Personal! El jugador queda expulsado del partido.', { duration: 5000 })
+      } else {
+        toast.success('Falta registrada')
       }
-
-      toast.success('Falta registrada')
     } catch (err) {
       console.error(err)
       toast.error('Error al guardar falta')
@@ -293,6 +297,12 @@ export default function PartidoVivo() {
       const doc = new jsPDF()
       const p = partido
       
+      // FUNCIÓN PARA LIMPIAR ACENTOS Y Ñ (Evita que el PDF salga en blanco)
+      const cleanText = (str) => {
+        if (!str) return '';
+        return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      }
+
       const dibujarEncabezado = (pagina) => {
         doc.setFont("helvetica", "bold")
         doc.setFontSize(14)
@@ -305,7 +315,7 @@ export default function PartidoVivo() {
         doc.line(15, 28, 195, 28)
         doc.setFont("helvetica", "bold")
         doc.setFontSize(12)
-        doc.text(`ACTA DE JUEGO - PÁGINA ${pagina}`, 105, 35, { align: 'center' })
+        doc.text(`ACTA DE JUEGO - PAGINA ${pagina}`, 105, 35, { align: 'center' })
       }
 
       dibujarEncabezado(1)
@@ -314,19 +324,19 @@ export default function PartidoVivo() {
       
       const fechaStr = new Date().toLocaleDateString()
       doc.text(`VOCAL DE TURNO: ____________________`, 15, 45)
-      doc.text(`CIUDAD: Pujilí`, 100, 45)
+      doc.text(`CIUDAD: Pujili`, 100, 45)
       doc.text(`FECHA: ${fechaStr}`, 145, 45)
       doc.text(`HORA: ${p.hora?.slice(0,5) || '________'}`, 15, 51)
 
       doc.setFont("helvetica", "bold")
-      doc.text(`CLUB: ${equipoLocal?.nombre?.toUpperCase()}`, 15, 60)
-      doc.text(`CATEGORÍA: ${equipoLocal?.categoria?.toUpperCase() || ''}`, 100, 60)
+      doc.text(`CLUB: ${cleanText(equipoLocal?.nombre?.toUpperCase())}`, 15, 60)
+      doc.text(`CATEGORIA: ${cleanText(equipoLocal?.categoria?.toUpperCase())}`, 100, 60)
 
       const filasLocal = jugadoresLocal.filter(j => planillaLocal.find(pl => pl.jugador_id === j.id)).map(j => {
         const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
         const amarillas = eventos.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
         const rojas = eventos.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [j.dorsal || '-', `${j.apellidos} ${j.nombres}`, goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
+        return [j.dorsal || '-', cleanText(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
       })
 
       autoTable(doc, {
@@ -341,14 +351,14 @@ export default function PartidoVivo() {
 
       let finalY = doc.lastAutoTable.finalY + 10
       doc.setFont("helvetica", "bold")
-      doc.text(`CLUB: ${equipoVisitante?.nombre?.toUpperCase()}`, 15, finalY)
-      doc.text(`CATEGORÍA: ${equipoVisitante?.categoria?.toUpperCase() || ''}`, 100, finalY)
+      doc.text(`CLUB: ${cleanText(equipoVisitante?.nombre?.toUpperCase())}`, 15, finalY)
+      doc.text(`CATEGORIA: ${cleanText(equipoVisitante?.categoria?.toUpperCase())}`, 100, finalY)
 
       const filasVisitante = jugadoresVisitante.filter(j => planillaLocal.find(pl => pl.jugador_id === j.id)).map(j => {
         const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
         const amarillas = eventos.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
         const rojas = eventos.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [j.dorsal || '-', `${j.apellidos} ${j.nombres}`, goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
+        return [j.dorsal || '-', cleanText(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
       })
 
       autoTable(doc, {
@@ -374,7 +384,7 @@ export default function PartidoVivo() {
 
       const dibujarSeccionTarjetas = (startY, nombreClub, tarjetas) => {
         doc.setFont("helvetica", "bold")
-        doc.text(`TARJETAS DEL CLUB: ${nombreClub.toUpperCase()}`, 15, startY)
+        doc.text(`TARJETAS DEL CLUB: ${cleanText(nombreClub.toUpperCase())}`, 15, startY)
         let yAmarillas = startY + 6
         let yRojas = startY + 45
 
@@ -386,8 +396,8 @@ export default function PartidoVivo() {
           doc.text(`NO. ______`, 15, yAmarillas + (i*6))
           doc.line(35, yAmarillas + (i*6), 130, yAmarillas + (i*6))
           if (amarillas[i]) {
-            doc.text(amarillas[i].jugador, 37, yAmarillas + (i*6) - 1)
-            doc.text(`POR: ${amarillas[i].causa || '______'}`, 135, yAmarillas + (i*6))
+            doc.text(cleanText(amarillas[i].jugador), 37, yAmarillas + (i*6) - 1)
+            doc.text(`POR: ${cleanText(amarillas[i].causa || '______')}`, 135, yAmarillas + (i*6))
           } else {
             doc.text(`POR: ________________`, 135, yAmarillas + (i*6))
           }
@@ -402,8 +412,8 @@ export default function PartidoVivo() {
           doc.text(`NO. ______`, 15, yRojas + (i*6))
           doc.line(35, yRojas + (i*6), 130, yRojas + (i*6))
           if (rojas[i]) {
-            doc.text(rojas[i].jugador, 37, yRojas + (i*6) - 1)
-            doc.text(`POR: ${rojas[i].causa || '______'}`, 135, yRojas + (i*6))
+            doc.text(cleanText(rojas[i].jugador), 37, yRojas + (i*6) - 1)
+            doc.text(`POR: ${cleanText(rojas[i].causa || '______')}`, 135, yRojas + (i*6))
           } else {
             doc.text(`POR: ________________`, 135, yRojas + (i*6))
           }
@@ -414,53 +424,50 @@ export default function PartidoVivo() {
       let nextY = dibujarSeccionTarjetas(55, equipoLocal?.nombre, tarjetasLocal)
       nextY = dibujarSeccionTarjetas(nextY, equipoVisitante?.nombre, tarjetasVisitante)
 
+      // SECCIÓN NOVEDADES SIN LÍNEAS
       doc.setFont("helvetica", "bold")
       doc.text('NOVEDADES:', 15, nextY)
       doc.setFont("helvetica", "normal")
-      const splitText = doc.splitTextToSize(p.observaciones || 'Sin novedades registradas.', 175)
+      const splitText = doc.splitTextToSize(cleanText(p.observaciones) || 'Sin novedades registradas.', 175)
       doc.text(splitText, 15, nextY + 6)
       
-      let lineY = nextY + 6 + (splitText.length * 5) + 5
-      for(let i=0; i<4; i++) {
-        doc.line(15, lineY + (i*8), 195, lineY + (i*8))
-      }
+      let lineY = nextY + 6 + (splitText.length * 5) + 10
 
-      // === FIRMAS ===
-      const firmaY = Math.min(lineY + 50, 220)
-      const firmaY2 = firmaY + 30 // <--- DEFINIDO ANTES DE USARSE
+      // FIRMAS EN UNA SOLA LÍNEA
+      const firmaY = Math.min(lineY + 50, 240)
       
       const fArbitro = firmas.find(f => f.tipo_firmante === 'arbitro')
       const fCapLocal = firmas.find(f => f.tipo_firmante === 'local')
       const fCapVisitante = firmas.find(f => f.tipo_firmante === 'visitante')
       const fVocal = firmas.find(f => f.tipo_firmante === 'vocal')
 
-      // Función limpia de firmas
       const drawImageSafely = (base64, x, y, w, h) => {
         try {
           if (!base64) return;
           const cleanB64 = base64.includes(',') ? base64.split(',')[1] : base64;
-          doc.addImage(cleanB64, "png", x, y, w, h);
+          doc.addImage(cleanB64, "png", x, y, w, h, undefined, 'FAST');
         } catch (e) {
           console.error("Error al dibujar firma en PDF", e);
         }
       };
 
-      drawImageSafely(fCapLocal?.firma_base64, 20, firmaY - 20, 40, 20)
-      drawImageSafely(fCapVisitante?.firma_base64, 130, firmaY - 20, 40, 20)
-      drawImageSafely(fArbitro?.firma_base64, 50, firmaY2 - 20, 40, 20)
-      drawImageSafely(fVocal?.firma_base64, 120, firmaY2 - 20, 40, 20)
+      // Posiciones X para las 4 firmas
+      const xPositions = [15, 65, 115, 165];
+      const firmantes = [
+        { nombre: 'CAPITÁN LOCAL', firma: fCapLocal },
+        { nombre: 'CAPITÁN VISITANTE', firma: fCapVisitante },
+        { nombre: 'ÁRBITRO', firma: fArbitro },
+        { nombre: 'VOCAL', firma: fVocal }
+      ];
 
-      doc.line(15, firmaY, 65, firmaY)
-      doc.line(135, firmaY, 185, firmaY)
-      doc.setFontSize(8)
-      doc.setFont("helvetica", "bold")
-      doc.text(`CAPITÁN ${equipoLocal?.nombre}`, 40, firmaY + 4, { align: 'center' })
-      doc.text(`CAPITÁN ${equipoVisitante?.nombre}`, 160, firmaY + 4, { align: 'center' })
-
-      doc.line(40, firmaY2, 100, firmaY2)
-      doc.line(110, firmaY2, 170, firmaY2)
-      doc.text('FIRMA DEL SR. ÁRBITRO', 70, firmaY2 + 4, { align: 'center' })
-      doc.text('FIRMA DEL VOCAL', 140, firmaY2 + 4, { align: 'center' })
+      firmantes.forEach((item, index) => {
+        const x = xPositions[index];
+        drawImageSafely(item.firma?.firma_base64, x, firmaY - 20, 30, 15)
+        doc.line(x, firmaY, x + 30, firmaY)
+        doc.setFontSize(7)
+        doc.setFont("helvetica", "bold")
+        doc.text(item.nombre, x + 15, firmaY + 4, { align: 'center' })
+      })
 
       doc.setFontSize(8)
       doc.text('VIVE EL FUTBOL SIN DROGAS Y SIN ALCOHOL', 15, 285)
@@ -468,12 +475,21 @@ export default function PartidoVivo() {
 
       const nombreLocal = equipoLocal?.nombre?.replace(/[^a-zA-Z0-9]/g, '') || 'Local';
       const nombreVisitante = equipoVisitante?.nombre?.replace(/[^a-zA-Z0-9]/g, '') || 'Visitante';
-      doc.save(`Acta_${nombreLocal}_vs_${nombreVisitante}.pdf`)
+      
+      const pdfBlob = doc.output('blob');
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Acta_${nombreLocal}_vs_${nombreVisitante}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
       
       toast.success('PDF Oficial descargado')
     } catch (err) {
       console.error("Error general en PDF:", err)
-      toast.error('Error al generar PDF')
+      toast.error('Error al generar PDF: ' + err.message)
     }
   }
 
@@ -484,31 +500,43 @@ export default function PartidoVivo() {
     const { habilitado, motivo } = evaluarJugador(j.id)
     const titular = esTitular(j.id, equipoId)
     const evs = getEventosJugador(j.id)
-    const flts = getFaltasJugador(j.id)
+    
+    const faltasTotales = getFaltasTotalesJugador(j.id)
+    const faltasPeriodo = getFaltasJugadorPeriodo(j.id)
+    const expulsadoPorFaltas = faltasTotales >= 5
+    
+    // Si está expulsado, lo bloqueamos visualmente
+    const bloqueado = !habilitado || expulsadoPorFaltas
+    const motivoBloqueo = expulsadoPorFaltas ? 'Expulsado (5 faltas)' : motivo
 
     return (
       <div 
         key={j.id} 
         onClick={() => {
           if (partido.jugado) return toast.error('El acta ya está finalizada');
+          if (expulsadoPorFaltas) return toast.error('Este jugador fue expulsado por acumulación de 5 faltas.');
           setJugadorSeleccionado({ jugador: j, equipoId, habilitado, motivo });
         }} 
-        className={`p-3 flex justify-between items-center cursor-pointer transition-colors ${!habilitado ? 'bg-red-50 opacity-80' : titular ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-100'}`}
+        className={`p-3 flex justify-between items-center cursor-pointer transition-colors ${bloqueado ? 'bg-red-50 opacity-80' : titular ? 'bg-green-50 hover:bg-green-100' : 'hover:bg-gray-100'}`}
       >
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold text-gray-600 overflow-hidden relative">
-             {!habilitado && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><Lock size={12} className="text-white"/></div>}
+             {bloqueado && <div className="absolute inset-0 bg-black/40 flex items-center justify-center"><Lock size={12} className="text-white"/></div>}
              {j.foto_url ? <img src={j.foto_url} className="w-full h-full object-cover" /> : <User size={16} />}
           </div>
           <div>
             <p className="font-semibold text-sm text-gray-800 flex items-center gap-1">
               {j.apellidos} {titular && habilitado && <CheckCircle size={12} className="text-green-600" />}
             </p>
-            <p className="text-xs text-gray-500">{j.nombres} {flts.length > 0 && <span className="text-orange-500 font-bold">(Faltas: {flts.length})</span>}</p>
+            <p className="text-xs text-gray-500">
+              {j.nombres} 
+              {faltasPeriodo > 0 && !expulsadoPorFaltas && <span className="text-orange-500 font-bold ml-1">(Faltas 1T: {faltasPeriodo})</span>}
+            </p>
           </div>
         </div>
         <div className="flex gap-1 items-center">
-           {!habilitado && <span className="text-[10px] font-bold text-red-600 mr-2">{motivo}</span>}
+           {expulsadoPorFaltas && <span className="text-[10px] font-bold text-red-600 mr-2 flex items-center gap-1"><Ban size={12}/> 5 Faltas</span>}
+           {!expulsadoPorFaltas && !habilitado && <span className="text-[10px] font-bold text-red-600 mr-2">{motivoBloqueo}</span>}
            {evs.map(e => {
              if (e.tipo === 'gol') return <Circle key={e.id} size={16} className="text-green-600 fill-green-600" />
              if (e.tipo === 'amarilla') return <div key={e.id} className="w-3 h-4 bg-yellow-400 rounded-sm" />
