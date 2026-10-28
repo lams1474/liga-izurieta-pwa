@@ -25,11 +25,11 @@ export async function sincronizarPartido(partidoId) {
 
   if (errPartido) throw new Error('Error actualizando partido: ' + errPartido.message)
 
-  // Obtener el etapa_id del partido
+  // Obtener el etapa_id del partido (con protección)
   let etapaId = null
   try {
     const { data: pData } = await supabase.from('partidos').select('fecha_id, fechas(etapa_id)').eq('id', partidoId).single()
-    etapaId = pData?.fechas?.etapa_id
+    etapaId = pData?.fechas?.etapa_id || null
   } catch (e) {
     console.error("No se pudo obtener el etapa_id", e)
   }
@@ -57,16 +57,16 @@ export async function sincronizarPartido(partidoId) {
             jugador_id: ev.jugador_id, 
             equipo_id: ev.equipo_id, 
             partido_id: partidoId,
-            etapa_id: etapaId, 
+            etapa_id: etapaId, // Puede ser null, la BD lo aceptará
             tipo: ev.tipo, 
             motivo: ev.causa || 'No especificada',
             fechas_sancion: ev.tipo === 'roja' ? 1 : 0,
             fechas_cumplidas: 0, 
             activa: true
           })
-          if (errSancion) console.error("Error insertando sanción:", errSancion)
+          if (errSancion) console.error("❌ Error insertando sanción:", errSancion)
         } catch (e) {
-          console.error("Error crítico insertando sanción:", e)
+          console.error("❌ Error crítico insertando sanción:", e)
         }
       }
     }
