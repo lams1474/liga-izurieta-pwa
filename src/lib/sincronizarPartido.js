@@ -23,9 +23,12 @@ export async function sincronizarPartido(partidoId) {
     observaciones: partido.observaciones || null
   }).eq('id', partidoId)
 
-  if (errPartido) throw new Error('Error actualizando partido: ' + errPartido.message)
+  if (errPartido) {
+    alert("ERROR AL ACTUALIZAR PARTIDO: " + errPartido.message)
+    throw new Error('Error actualizando partido: ' + errPartido.message)
+  }
 
-  // Obtener el etapa_id del partido (con protección)
+  // Obtener el etapa_id del partido
   let etapaId = null
   try {
     const { data: pData } = await supabase.from('partidos').select('fecha_id, fechas(etapa_id)').eq('id', partidoId).single()
@@ -41,32 +44,35 @@ export async function sincronizarPartido(partidoId) {
     await supabase.from('goles').delete().eq('partido_id', partidoId)
     for (const ev of eventos) {
       if (ev.tipo === 'gol') {
-        await supabase.from('goles').insert({
+        const { error } = await supabase.from('goles').insert({
           partido_id: partidoId, jugador_id: ev.jugador_id, minuto: ev.minuto, tipo: 'normal'
         })
+        if (error) alert("ERROR AL GUARDAR GOL: " + error.message)
       }
     }
 
     // Sincronizar tarjetas y sanciones
     console.log("3. Sincronizando tarjetas...")
     await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
+    
     for (const ev of eventos) {
       if (ev.tipo === 'amarilla' || ev.tipo === 'roja') {
-        try {
-          const { error: errSancion } = await supabase.from('sanciones_jugador').insert({
-            jugador_id: ev.jugador_id, 
-            equipo_id: ev.equipo_id, 
-            partido_id: partidoId,
-            etapa_id: etapaId, // Puede ser null, la BD lo aceptará
-            tipo: ev.tipo, 
-            motivo: ev.causa || 'No especificada',
-            fechas_sancion: ev.tipo === 'roja' ? 1 : 0,
-            fechas_cumplidas: 0, 
-            activa: true
-          })
-          if (errSancion) console.error("❌ Error insertando sanción:", errSancion)
-        } catch (e) {
-          console.error("❌ Error crítico insertando sanción:", e)
+        // AQUI FORZAMOS EL ALERT PARA VER EL ERROR
+        const { error: errSancion } = await supabase.from('sanciones_jugador').insert({
+          jugador_id: ev.jugador_id, 
+          equipo_id: ev.equipo_id, 
+          partido_id: partidoId,
+          etapa_id: etapaId, 
+          tipo: ev.tipo, 
+          motivo: ev.causa || 'No especificada',
+          fechas_sancion: ev.tipo === 'roja' ? 1 : 0,
+          fechas_cumplidas: 0, 
+          activa: true
+        })
+        
+        if (errSancion) {
+          alert("❌ ERROR CRÍTICO AL GUARDAR TARJETA:\n\n" + errSancion.message + "\n\nDetalles: " + errSancion.details)
+          console.error("Error insertando sanción:", errSancion)
         }
       }
     }
@@ -118,6 +124,7 @@ export async function sincronizarPartido(partidoId) {
     console.log("✅ Sincronización completada")
   } catch (error) {
     console.error("⚠️ Error en sincronización secundaria:", error)
+    alert("ERROR GENERAL: " + error.message)
   }
 
   await db.partidos.update(partidoId, { jugado: true, sincronizado: true, goles_local: golesLocal, goles_visitante: golesVisitante })
