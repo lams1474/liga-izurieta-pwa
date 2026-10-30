@@ -334,7 +334,7 @@ export default function PartidoVivo() {
       doc.setFontSize(9)
       doc.setFont("helvetica", "normal")
       
-      const fechaStr = new Date().toLocaleDateString()
+      const fechaStr = p.fecha_partido ? new Date(p.fecha_partido + 'T00:00:00').toLocaleDateString('es-EC') : '--/--/----'
       doc.text(`VOCAL DE TURNO: ____________________`, 15, 45)
       doc.text(`CIUDAD: Pujili`, 100, 45)
       doc.text(`FECHA: ${fechaStr}`, 145, 45)
@@ -454,7 +454,7 @@ export default function PartidoVivo() {
       
       let lineY = nextY + 6 + (splitText.length * 5) + 10
 
-      const firmaY = Math.min(lineY + 50, 240)
+      const firmaY = Math.min(lineY + 110, 250) // Ajustado para bajar las firmas
       
       const fArbitro = firmas.find(f => f.tipo_firmante === 'arbitro')
       const fCapLocal = firmas.find(f => f.tipo_firmante === 'local')
