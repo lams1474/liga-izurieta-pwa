@@ -22,9 +22,8 @@ export async function sincronizarPartido(partidoId) {
     goles_local: golesLocal,
     goles_visitante: golesVisitante,
     observaciones: partido.observaciones || null,
-    // Aseguramos que la fecha y hora se guarden si venían del calendario
-    fecha_partido: partido.fecha_partido || null, 
-    hora_partido: partido.hora_partido || null
+    hora: partido.hora || null // 'hora' SÍ existe en tu tabla
+           
   }).eq('id', partidoId)
 
   if (errPartido) {
