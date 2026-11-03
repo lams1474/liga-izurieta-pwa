@@ -27,11 +27,14 @@ export default function PartidoVivo() {
   const [planillaLocal, setPlanillaLocal] = useState([])
   const [planillaVisitante, setPlanillaVisitante] = useState([])
   const [carnets, setCarnets] = useState([])
+  const [firmas, setFirmas] = useState([])
   const [deudasTarjetas, setDeudasTarjetas] = useState([])
 
   const [jugadorSeleccionado, setJugadorSeleccionado] = useState(null)
+  const [modalTarjeta, setModalTarjeta] = useState(null) // { tipo: 'amarilla' | 'roja' }
+  const [causaTarjeta, setCausaTarjeta] = useState('')
+  
   const [finalizando, setFinalizando] = useState(false)
-
   const [pasoFirma, setPasoFirma] = useState(null)
   const [firmasTemporales, setFirmasTemporales] = useState([])
   const [novedadesGenerales, setNovedadesGenerales] = useState('')
@@ -113,7 +116,8 @@ export default function PartidoVivo() {
         setEventos(await db.eventos.where('partido_id').equals(id).toArray())
         setFaltas(await db.faltas.where('partido_id').equals(id).toArray())
         setCarnets(await db.carnets.toArray())
-        
+        setFirmas(await db.firmas.where('partido_id').equals(id).toArray())
+
         if (navigator.onLine) {
           const { data: deudas } = await supabase.rpc('obtener_deudas_tarjetas_partido', { p_partido_id: id })
           setDeudasTarjetas(deudas || [])
@@ -135,6 +139,23 @@ export default function PartidoVivo() {
     }
   }
 
+    async function toggleTitular(jugadorId, equipoId) {
+    if (partido.jugado) return toast.error('El acta ya está finalizada')
+    const plan = equipoId === partido.equipo_local_id ? planillaLocal : planillaVisitante
+    const insc = plan.find(pl => pl.jugador_id === jugadorId)
+    if (!insc) return
+    const nuevoEstado = !insc.es_titular
+    await db.planilla.update(insc.id, { es_titular: nuevoEstado, sync_status: 'pending' })
+    if (equipoId === partido.equipo_local_id) {
+      setPlanillaLocal(prev => prev.map(p => p.id === insc.id ? { ...p, es_titular: nuevoEstado } : p))
+    } else {
+      setPlanillaVisitante(prev => prev.map(p => p.id === insc.id ? { ...p, es_titular: nuevoEstado } : p))
+    }
+    if (navigator.onLine) {
+      await supabase.from('planilla_partido').update({ es_titular: nuevoEstado }).eq('id', insc.id)
+    }
+  }
+
   async function registrarEvento(tipo) {
     if (!jugadorSeleccionado || partido.jugado) return
     const { jugador, equipoId } = jugadorSeleccionado
@@ -149,7 +170,7 @@ export default function PartidoVivo() {
       })
       setEventos(await db.eventos.where('partido_id').equals(id).toArray())
       setJugadorSeleccionado(null)
-      toast.success('Evento registrado')
+      toast.success(tipo === 'gol' ? '¡GOL!' : 'Evento registrado')
     } catch {
       toast.error('Error al registrar')
     }
@@ -162,7 +183,7 @@ export default function PartidoVivo() {
     if (bloq.bloqueado) return toast.error(`Jugador bloqueado: ${bloq.motivo}`)
 
     const faltasJugador = faltas.filter(f => f.jugador_id === jugador.id && f.periodo === periodoActual && f.tipo === 'personal')
-    if (faltasJugador.length >= 5) return toast.error('Límite de 5 faltas alcanzado para este jugador')
+    if (faltasJugador.length >= 5) return toast.error('Límite de 5 faltas alcanzado')
 
     try {
       await db.faltas.add({
@@ -183,7 +204,34 @@ export default function PartidoVivo() {
     }
   }
 
-  // ---- MODAL DORSAL ----
+  // --- TARJETAS (Abre modal para causa) ---
+  function abrirModalTarjeta(tipo) {
+    if (partido.jugado) return toast.error('Acta finalizada')
+    setCausaTarjeta('')
+    setModalTarjeta({ tipo })
+  }
+
+  async function confirmarTarjeta() {
+    if (!modalTarjeta || !jugadorSeleccionado) return
+    const { jugador, equipoId } = jugadorSeleccionado
+    const { tipo } = modalTarjeta
+
+    try {
+      await db.faltas.add({
+        partido_id: id, jugador_id: jugador.id, equipo_id: equipoId, tipo: tipo,
+        minuto: Math.floor((22 * 60 - tiempoRestante) / 60) + (periodoActual === 1 ? 0 : 22),
+        periodo: periodoActual, causa: causaTarjeta || 'Sin causa especificada', sync_status: 'pending'
+      })
+      setFaltas(await db.faltas.where('partido_id').equals(id).toArray())
+      setJugadorSeleccionado(null)
+      setModalTarjeta(null)
+      toast.success(`Tarjeta ${tipo} registrada`)
+    } catch {
+      toast.error('Error al registrar tarjeta')
+    }
+  }
+
+  // --- DORSAL ---
   function abrirModalDorsal(jugadorId, equipoId, jugadorNombre, dorsalActual) {
     setDorsalInput(dorsalActual ? String(dorsalActual) : '')
     setModalDorsal({ jugadorId, equipoId, jugadorNombre })
@@ -214,7 +262,7 @@ export default function PartidoVivo() {
     } finally { setGuardandoDorsal(false) }
   }
 
-  // ---- CAPITAN ----
+  // --- CAPITAN ---
   async function marcarCapitan(jugadorId, equipoId) {
     if (partido.jugado) return toast.error('Acta finalizada')
     if (rolUsuario !== 'vocal') return toast.error('Solo el vocal designa capitán')
@@ -239,7 +287,7 @@ export default function PartidoVivo() {
     toast.success(yaEsCapitan ? 'Capitanía removida' : 'Capitán designado')
   }
 
-  // ---- COBRO ----
+  // --- COBRO ---
   async function confirmarCobro() {
     const monto = parseFloat(montoCobro)
     if (!monto || monto <= 0) return toast.error('Monto inválido')
@@ -256,7 +304,7 @@ export default function PartidoVivo() {
     } finally { setCobrando(false) }
   }
 
-  // ---- FIRMAS ----
+  // --- FIRMAS ---
   function iniciarCierre() {
     if (!window.confirm('¿Deseas finalizar el partido? Se procederá a firmar el acta.')) return
     setRelojCorriendo(false)
@@ -303,24 +351,14 @@ export default function PartidoVivo() {
     }
   }
 
-  // ================= PDF =================
-  async function descargarPDF() {
+  // ================= PDF DE LA PWA =================
+  function descargarPDF() {
     try {
-      const firmas = await db.firmas.where('partido_id').equals(id).toArray()
       const doc = new jsPDF()
       const p = partido
-      const sanitize = (s) => s ? String(s).trim() : ''
-
-      const getDorsal = (jugadorId) => {
-        const pl = planillaLocal.find(item => item.jugador_id === jugadorId) || planillaVisitante.find(item => item.jugador_id === jugadorId)
-        return pl?.dorsal ? String(pl.dorsal) : '-'
-      }
-
-      const getJugadorInfo = (jugadorId) => {
-        const j = [...jugadoresLocal, ...jugadoresVisitante].find(item => item.id === jugadorId)
-        const dorsalStr = getDorsal(jugadorId) !== '-' ? getDorsal(jugadorId) : ''
-        if (!j) return { dorsal: dorsalStr, nombreCompleto: '' }
-        return { dorsal: dorsalStr, nombreCompleto: `${j.apellidos} ${j.nombres}` }
+      const sanitize = (s) => {
+        if (!s) return '';
+        return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, 'n').trim();
       }
 
       const dibujarEncabezado = (pagina) => {
@@ -343,6 +381,7 @@ export default function PartidoVivo() {
       doc.text('CIUDAD: Pujili', 100, 45)
       doc.text(`FECHA: ${fechaStr}`, 145, 45)
       doc.text(`HORA: ${p.hora?.slice(0,5) || '________'}`, 15, 51)
+      doc.text(`ARBITRO: ${sanitize(p.arbitro_nombre) || '____________________'}`, 100, 51)
 
       doc.setFont("helvetica", "bold")
       doc.text(`CLUB: ${sanitize(equipoLocal?.nombre?.toUpperCase())}`, 15, 60)
@@ -350,15 +389,15 @@ export default function PartidoVivo() {
 
       const filasLocal = jugadoresLocal.filter(j => planillaLocal.some(pl => pl.jugador_id === j.id)).map(j => {
         const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
-        const amarillas = eventos.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
-        const rojas = eventos.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [getDorsal(j.id), sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
+        const amarillas = faltas.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
+        const rojas = faltas.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
+        return [planillaLocal.find(pl => pl.jugador_id === j.id)?.dorsal || '-', sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
       })
 
       autoTable(doc, {
         startY: 63, head: [['NO.', 'NOMBRES DE JUGADORES', 'GOL', 'T.A.', 'T.R.']], body: filasLocal, theme: 'grid',
         headStyles: { fillColor: [200,200,200], textColor: [0,0,0], fontStyle: 'bold' },
-        styles: { fontSize: 8, cellPadding: 1.5 },
+        styles: { fontSize: 8, cellPadding: 1.5, font: 'helvetica' },
         columnStyles: { 0:{cellWidth:15,halign:'center'}, 1:{cellWidth:110}, 2:{cellWidth:15,halign:'center'}, 3:{cellWidth:15,halign:'center'}, 4:{cellWidth:15,halign:'center'} }
       })
 
@@ -369,68 +408,50 @@ export default function PartidoVivo() {
 
       const filasVisitante = jugadoresVisitante.filter(j => planillaVisitante.some(pl => pl.jugador_id === j.id)).map(j => {
         const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
-        const amarillas = eventos.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
-        const rojas = eventos.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [getDorsal(j.id), sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
+        const amarillas = faltas.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
+        const rojas = faltas.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
+        return [planillaVisitante.find(pl => pl.jugador_id === j.id)?.dorsal || '-', sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
       })
 
       autoTable(doc, {
         startY: finalY + 3, head: [['NO.', 'NOMBRES DE JUGADORES', 'GOL', 'T.A.', 'T.R.']], body: filasVisitante, theme: 'grid',
         headStyles: { fillColor: [200,200,200], textColor: [0,0,0], fontStyle: 'bold' },
-        styles: { fontSize: 8, cellPadding: 1.5 },
+        styles: { fontSize: 8, cellPadding: 1.5, font: 'helvetica' },
         columnStyles: { 0:{cellWidth:15,halign:'center'}, 1:{cellWidth:110}, 2:{cellWidth:15,halign:'center'}, 3:{cellWidth:15,halign:'center'}, 4:{cellWidth:15,halign:'center'} }
       })
 
       doc.addPage(); dibujarEncabezado(2); doc.setFontSize(9); doc.setFont("helvetica", "normal")
-      doc.text(`NOMBRE DEL SR. ARBITRO: ${sanitize(p.arbitro_nombre) || '________________________'}`, 15, 45)
+      
+      let nextY = 45
+      const tarjetasLocal = faltas.filter(f => f.equipo_id === p.equipo_local_id && (f.tipo === 'amarilla' || f.tipo === 'roja'))
+      const tarjetasVisitante = faltas.filter(f => f.equipo_id === p.equipo_visitante_id && (f.tipo === 'amarilla' || f.tipo === 'roja'))
 
-      const tarjetasLocal = eventos.filter(ev => (ev.tipo === 'amarilla' || ev.tipo === 'roja') && ev.equipo_id === p.equipo_local_id)
-      const tarjetasVisitante = eventos.filter(ev => (ev.tipo === 'amarilla' || ev.tipo === 'roja') && ev.equipo_id === p.equipo_visitante_id)
-
-      const dibujarSeccionTarjetas = (startY, nombreClub, tarjetas) => {
+      const dibujarTarjetas = (startY, nombreClub, tarjetas) => {
         doc.setFont("helvetica", "bold")
-        doc.text(`TARJETAS DEL CLUB: ${sanitize(nombreClub?.toUpperCase() || '')}`, 15, startY)
-        let yAmarillas = startY + 6; let yRojas = startY + 45
-        doc.text('TARJETAS AMARILLAS:', 15, yAmarillas); doc.setFont("helvetica", "normal"); yAmarillas += 5
-        const amarillas = tarjetas.filter(t => t.tipo === 'amarilla')
-        for(let i=0; i<6; i++) {
-          const card = amarillas[i]
-          if (card) {
-            const info = getJugadorInfo(card.jugador_id)
-            doc.text(`NO. ${info.dorsal || '___'}`, 15, yAmarillas + (i*6))
-            doc.line(35, yAmarillas + (i*6), 130, yAmarillas + (i*6))
-            doc.text(sanitize(info.nombreCompleto), 37, yAmarillas + (i*6) - 1)
-            doc.text(`POR: ${sanitize(card.causa || '______')}`, 135, yAmarillas + (i*6))
-          } else {
-            doc.text(`NO. ______`, 15, yAmarillas + (i*6)); doc.line(35, yAmarillas + (i*6), 130, yAmarillas + (i*6)); doc.text(`POR: ________________`, 135, yAmarillas + (i*6))
-          }
+        doc.text(`TARJETAS DEL CLUB: ${sanitize(nombreClub?.toUpperCase())}`, 15, startY)
+        let y = startY + 6
+        doc.setFont("helvetica", "normal")
+        if(tarjetas.length === 0) {
+           doc.text('Sin tarjetas registradas.', 15, y)
+           return y + 10
         }
-        doc.setFont("helvetica", "bold"); doc.text('TARJETAS ROJAS:', 15, yRojas); doc.setFont("helvetica", "normal"); yRojas += 5
-        const rojas = tarjetas.filter(t => t.tipo === 'roja')
-        for(let i=0; i<4; i++) {
-          const card = rojas[i]
-          if (card) {
-            const info = getJugadorInfo(card.jugador_id)
-            doc.text(`NO. ${info.dorsal || '___'}`, 15, yRojas + (i*6))
-            doc.line(35, yRojas + (i*6), 130, yRojas + (i*6))
-            doc.text(sanitize(info.nombreCompleto), 37, yRojas + (i*6) - 1)
-            doc.text(`POR: ${sanitize(card.causa || '______')}`, 135, yRojas + (i*6))
-          } else {
-            doc.text(`NO. ______`, 15, yRojas + (i*6)); doc.line(35, yRojas + (i*6), 130, yRojas + (i*6)); doc.text(`POR: ________________`, 135, yRojas + (i*6))
-          }
-        }
-        return yRojas + 30
+        tarjetas.forEach((t, i) => {
+           const jug = [...jugadoresLocal, ...jugadoresVisitante].find(j => j.id === t.jugador_id)
+           const dorsal = (t.equipo_id === p.equipo_local_id ? planillaLocal : planillaVisitante).find(pl => pl.jugador_id === t.jugador_id)?.dorsal || '-'
+           doc.text(`MIN ${t.minuto}: ${sanitize(jug?.apellidos)} ${sanitize(jug?.nombres)} (${t.tipo.toUpperCase()}) - DORSAL ${dorsal} - CAUSA: ${sanitize(t.causa || 'No especificada')}`, 15, y + (i*6))
+        })
+        return y + (tarjetas.length * 6) + 10
       }
 
-      let nextY = dibujarSeccionTarjetas(55, equipoLocal?.nombre, tarjetasLocal)
-      nextY = dibujarSeccionTarjetas(nextY, equipoVisitante?.nombre, tarjetasVisitante)
+      nextY = dibujarTarjetas(nextY, equipoLocal?.nombre, tarjetasLocal)
+      nextY = dibujarTarjetas(nextY, equipoVisitante?.nombre, tarjetasVisitante)
 
       doc.setFont("helvetica", "bold"); doc.text('NOVEDADES:', 15, nextY); doc.setFont("helvetica", "normal")
-      const splitText = doc.splitTextToSize(sanitize(p.observaciones || 'Sin novedades registradas.'), 175)
+      const splitText = doc.splitTextToSize(sanitize(p.observaciones || 'Sin novedades.'), 175)
       doc.text(splitText, 15, nextY + 6)
       
       let lineY = nextY + 6 + (splitText.length * 5) + 10
-      const firmaY = lineY + 110 + 85 // Bajado 3cm
+      const firmaY = lineY + 85
 
       const fArbitro = firmas.find(f => f.tipo_firmante === 'arbitro')
       const fCapLocal = firmas.find(f => f.tipo_firmante === 'local')
@@ -439,19 +460,24 @@ export default function PartidoVivo() {
 
       const capLocalPlan = planillaLocal.find(pl => pl.es_capitan)
       const capVisitPlan = planillaVisitante.find(pl => pl.es_capitan)
-      const nombreCapLocal = capLocalPlan ? getJugadorInfo(capLocalPlan.jugador_id).nombreCompleto : ''
-      const nombreCapVisit = capVisitPlan ? getJugadorInfo(capVisitPlan.jugador_id).nombreCompleto : ''
+      const nombreCapLocal = capLocalPlan ? `${jugadoresLocal.find(j => j.id === capLocalPlan.jugador_id)?.apellidos} ${jugadoresLocal.find(j => j.id === capLocalPlan.jugador_id)?.nombres}` : ''
+      const nombreCapVisit = capVisitPlan ? `${jugadoresVisitante.find(j => j.id === capVisitPlan.jugador_id)?.apellidos} ${jugadoresVisitante.find(j => j.id === capVisitPlan.jugador_id)?.nombres}` : ''
 
       const drawImageSafely = (base64, x, y, w, h) => {
-        try { if (base64) doc.addImage(base64.replace(/^data:image\/(png|jpeg|jpg);base64,/, '').replace(/\s/g, ''), "png", x, y, w, h, undefined, 'FAST') } catch (e) { console.error(e) }
+        try { 
+          if (base64) {
+            const cleanB64 = base64.replace(/^data:image\/(png|jpeg|jpg);base64,/, '').replace(/\s/g, '');
+            doc.addImage(cleanB64, "PNG", x, y, w, h, undefined, 'FAST') 
+          }
+        } catch (e) { console.error("Error dibujando firma:", e) }
       }
 
       const xPositions = [15, 65, 115, 165]
       const firmantes = [
-        { nombre: `CAPITÁN ${sanitize(equipoLocal?.nombre?.toUpperCase())}`, firma: fCapLocal, persona: nombreCapLocal },
-        { nombre: `CAPITÁN ${sanitize(equipoVisitante?.nombre?.toUpperCase())}`, firma: fCapVisitante, persona: nombreCapVisit },
-        { nombre: 'ÁRBITRO', firma: fArbitro, persona: p.arbitro_nombre || '' },
-        { nombre: 'VOCAL', firma: fVocal, persona: p.vocal_nombre || '' }
+        { nombre: `CAPITAN ${sanitize(equipoLocal?.nombre?.toUpperCase())}`, firma: fCapLocal, persona: nombreCapLocal },
+        { nombre: `CAPITAN ${sanitize(equipoVisitante?.nombre?.toUpperCase())}`, firma: fCapVisitante, persona: nombreCapVisit },
+        { nombre: 'ARBITRO', firma: fArbitro, persona: sanitize(p.arbitro_nombre) },
+        { nombre: 'VOCAL', firma: fVocal, persona: sanitize(p.vocal_nombre) }
       ]
 
       firmantes.forEach((item, index) => {
@@ -463,8 +489,6 @@ export default function PartidoVivo() {
         if (item.persona) { doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.text(sanitize(item.persona), x + 15, firmaY + 8, { align: 'center' }) }
       })
 
-      doc.setFontSize(8); doc.text('VIVE EL FUTBOL SIN DROGAS Y SIN ALCOHOL', 15, 285); doc.text('CAMPEONATO 2026', 170, 285)
-
       const pdfBlob = doc.output('blob')
       const url = URL.createObjectURL(pdfBlob)
       const a = document.createElement('a')
@@ -474,137 +498,219 @@ export default function PartidoVivo() {
     } catch (err) { console.error('Error generando PDF:', err); toast.error('Error al generar el acta PDF') }
   }
 
-  if (cargando) return <div className="p-8 text-center">Cargando...</div>
+  if (cargando) return <div className="p-8 text-center text-gray-500">Cargando...</div>
 
   return (
-    <div className="min-h-screen bg-gray-100 pb-32">
-      <header className="bg-liga-azul text-white p-4 flex items-center gap-3 sticky top-0 z-10 shadow-md">
-        <button onClick={() => navigate('/partidos')} className="p-2 bg-white/10 rounded-md"><ArrowLeft size={20} /></button>
+    <div className="min-h-screen bg-gray-900 text-white pb-32 font-sans">
+      <header className="bg-black/50 backdrop-blur-md border-b border-gray-800 p-4 flex items-center gap-3 sticky top-0 z-10 shadow-lg">
+        <button onClick={() => navigate('/partidos')} className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors"><ArrowLeft size={20} className="text-liga-amarillo" /></button>
         <div className="flex-1">
-          <p className="text-xs text-liga-amarillo">PARTIDO EN VIVO</p>
-          <h1 className="font-bold">{equipoLocal?.nombre} vs {equipoVisitante?.nombre}</h1>
+          <p className="text-xs text-liga-amarillo font-bold uppercase tracking-wider">PARTIDO EN VIVO</p>
+          <h1 className="font-black text-lg">{equipoLocal?.nombre} vs {equipoVisitante?.nombre}</h1>
         </div>
       </header>
 
-      <main className="p-4 max-w-2xl mx-auto">
-        <div className="bg-white rounded-xl shadow p-4 mb-4 text-center">
-          <div className="text-3xl font-black">{Math.floor(tiempoRestante/60)}:{(tiempoRestante%60).toString().padStart(2,'0')}</div>
-          <div className="flex justify-center gap-2 mt-2">
-             <button onClick={() => setRelojCorriendo(!relojCorriendo)} className={`p-2 rounded-full text-white ${relojCorriendo ? 'bg-red-500' : 'bg-green-500'}`}>{relojCorriendo ? <Pause size={20}/> : <Play size={20}/>}</button>
-             <button onClick={() => { setRelojCorriendo(false); setTiempoRestante(22*60); setPeriodoActual(1) }} className="p-2 rounded-full bg-gray-500 text-white"><RotateCcw size={20}/></button>
-             {periodoActual === 1 && <button onClick={() => { setRelojCorriendo(false); setTiempoRestante(22*60); setPeriodoActual(2) }} className="text-xs bg-liga-amarillo text-black font-bold px-3 py-1 rounded shadow">Iniciar 2do Tiempo</button>}
+      <main className="p-4 max-w-2xl mx-auto space-y-4">
+        
+        {/* MARCADOR FUTURISTA */}
+        <div className="bg-gray-800 rounded-2xl shadow-2xl p-6 border border-blue-500/30 text-center relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-liga-amarillo"></div>
+          <div className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-liga-amarillo mb-2">
+            {Math.floor(tiempoRestante/60)}:{(tiempoRestante%60).toString().padStart(2,'0')}
+          </div>
+          <p className="text-sm text-gray-400 font-semibold mb-4">Periodo {periodoActual}</p>
+          <div className="flex justify-center gap-3">
+             <button onClick={() => setRelojCorriendo(!relojCorriendo)} className={`p-3 rounded-full text-white shadow-lg transition-all ${relojCorriendo ? 'bg-red-500 hover:bg-red-600 shadow-red-500/50' : 'bg-green-500 hover:bg-green-600 shadow-green-500/50'}`}>{relojCorriendo ? <Pause size={24}/> : <Play size={24}/>}</button>
+             <button onClick={() => { setRelojCorriendo(false); setTiempoRestante(22*60); setPeriodoActual(1) }} className="p-3 rounded-full bg-gray-700 text-white hover:bg-gray-600 transition-all"><RotateCcw size={24}/></button>
+             {periodoActual === 1 && <button onClick={() => { setRelojCorriendo(false); setTiempoRestante(22*60); setPeriodoActual(2) }} className="text-xs bg-liga-amarillo text-black font-bold px-4 py-2 rounded-lg shadow-lg hover:bg-yellow-400 transition-colors">Iniciar 2do Tiempo</button>}
           </div>
         </div>
 
+        {/* LISTA DE JUGADORES */}
         {[equipoLocal, equipoVisitante].map((eq, idx) => {
           if (!eq) return null
           const esLocal = idx === 0
           const jugadores = esLocal ? jugadoresLocal : jugadoresVisitante
           const planilla = esLocal ? planillaLocal : planillaVisitante
           const equipoId = esLocal ? partido.equipo_local_id : partido.equipo_visitante_id
-          const faltasEq = faltas.filter(f => f.equipo_id === equipoId && f.periodo === periodoActual).length
+          const faltasEq = faltas.filter(f => f.equipo_id === equipoId && f.periodo === periodoActual && f.tipo === 'personal').length
 
           return (
-            <div key={eq.id} className="bg-white rounded-xl shadow p-3 mb-4">
-              <h3 className="font-bold text-sm mb-2 flex justify-between">
-                <span>{eq.nombre}</span>
-                <span className={faltasEq >= 6 ? 'text-red-600' : 'text-gray-500'}>Faltas Eq: {faltasEq}</span>
-              </h3>
-              {jugadores.map(j => {
-                const insc = planilla.find(pl => pl.jugador_id === j.id)
-                const faltasJug = faltas.filter(f => f.jugador_id === j.id && f.periodo === periodoActual).length
-                const puedeEditar = rolUsuario === 'vocal' && !partido.jugado
-                return (
-                  <div key={j.id} className="flex items-center gap-2 p-2 border-b last:border-0 cursor-pointer hover:bg-gray-50" onClick={() => setJugadorSeleccionado({ jugador: j, equipoId })}>
-                    <span className="w-8 h-8 bg-gray-200 rounded flex items-center justify-center font-bold">
-                      {insc?.dorsal || '-'}
-                    </span>
-                    {puedeEditar && (
+            <div key={eq.id} className="bg-gray-800 rounded-2xl shadow-xl border border-gray-700 overflow-hidden mb-4">
+              <div className="bg-gray-900 p-3 flex justify-between items-center border-b border-gray-700">
+                <h3 className="font-bold text-sm text-blue-400">{eq.nombre}</h3>
+                <span className={`text-xs font-bold px-2 py-1 rounded-md ${faltasEq >= 6 ? 'bg-red-500/20 text-red-400' : 'bg-gray-700 text-gray-300'}`}>Faltas Eq: {faltasEq}</span>
+              </div>
+              <div className="divide-y divide-gray-700">
+                {jugadores.map(j => {
+                  const insc = planilla.find(pl => pl.jugador_id === j.id)
+                  const faltasJug = faltas.filter(f => f.jugador_id === j.id && f.periodo === periodoActual && f.tipo === 'personal').length
+                  const golesJug = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
+                  const amarillasJug = faltas.filter(f => f.jugador_id === j.id && f.tipo === 'amarilla').length
+                  const rojasJug = faltas.filter(f => f.jugador_id === j.id && f.tipo === 'roja').length
+                  const puedeEditar = rolUsuario === 'vocal' && !partido.jugado
+                  
+                  return (
+                    <div key={j.id} className="flex items-center gap-2 p-3 hover:bg-gray-750 transition-colors">
+                      
+                      {/* BOTÓN DORSAL */}
                       <button
-                        onClick={(e) => { e.stopPropagation(); abrirModalDorsal(j.id, equipoId, `${j.apellidos} ${j.nombres}`, insc?.dorsal) }}
-                        className="p-1 text-gray-400 hover:text-liga-azul"
-                        title="Editar dorsal"
+                        onClick={() => puedeEditar && abrirModalDorsal(j.id, equipoId, `${j.apellidos} ${j.nombres}`, insc?.dorsal)}
+                        disabled={!puedeEditar}
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg shadow-inner ${puedeEditar ? 'bg-gray-700 text-liga-amarillo hover:bg-gray-600' : 'bg-gray-800 text-gray-500'}`}
                       >
-                        <Pencil size={14} />
+                        {insc?.dorsal || '-'}
                       </button>
-                    )}
-                    <span className="flex-1 text-xs uppercase">{j.apellidos} {j.nombres}</span>
-                    {faltasJug > 0 && <span className="text-xs font-bold text-orange-500">{faltasJug}/5 Faltas</span>}
-                    {insc?.es_capitan && <span className="text-xs bg-liga-amarillo px-1 rounded">CAP</span>}
-                    {puedeEditar && (
+
+                      {puedeEditar && (
+                        <button onClick={() => abrirModalDorsal(j.id, equipoId, `${j.apellidos} ${j.nombres}`, insc?.dorsal)} className="p-1 text-gray-500 hover:text-blue-400">
+                          <Pencil size={16} />
+                        </button>
+                      )}
+
+                      {/* NOMBRE Y EVENTOS */}
                       <button
-                        onClick={(e) => { e.stopPropagation(); marcarCapitan(j.id, equipoId) }}
-                        className={`text-xs px-2 py-1 rounded ${insc?.es_capitan ? 'bg-liga-amarillo text-black' : 'bg-gray-100 text-gray-600'}`}
-                        title={insc?.es_capitan ? 'Quitar capitanía' : 'Designar capitán'}
+                        onClick={() => !partido.jugado && setJugadorSeleccionado({ jugador: j, equipoId })}
+                        disabled={partido.jugado}
+                        className="flex-1 text-left disabled:opacity-50"
                       >
-                        <UserCheck size={14} />
+                        <p className="text-sm font-bold uppercase text-gray-200">{j.apellidos} {j.nombres}</p>
+                        <div className="flex gap-2 mt-1 text-xs">
+                          {golesJug > 0 && <span className="text-green-400 font-bold">⚽ {golesJug}</span>}
+                          {amarillasJug > 0 && <span className="text-yellow-400 font-bold">🟨 {amarillasJug}</span>}
+                          {rojasJug > 0 && <span className="text-red-400 font-bold">🟥 {rojasJug}</span>}
+                          {faltasJug > 0 && <span className="text-orange-400 font-bold">Faltas: {faltasJug}/5</span>}
+                        </div>
                       </button>
-                    )}
-                    {insc?.es_titular ? <span className="text-green-600 text-xs font-bold">TIT</span> : <span className="text-gray-400 text-xs">SUP</span>}
-                  </div>
-                )
-              })}
+
+                      {/* BOTÓN CAPITÁN */}
+                      {puedeEditar && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); marcarCapitan(j.id, equipoId) }}
+                          className={`p-2 rounded-lg ${insc?.es_capitan ? 'bg-liga-amarillo text-black' : 'bg-gray-700 text-gray-400'}`}
+                        >
+                          <UserCheck size={16} />
+                        </button>
+                      )}
+
+                      {/* BOTÓN TITULAR/SUPLENTE */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleTitular(j.id, equipoId) }}
+                        disabled={!puedeEditar}
+                        className={`text-xs px-3 py-2 rounded-lg font-bold disabled:opacity-50 ${insc?.es_titular ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400'}`}
+                      >
+                        {insc?.es_titular ? 'TIT' : 'SUP'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )
         })}
 
+        {/* COBRO DE TARJETAS */}
         {deudasTarjetas.length > 0 && (
-          <div className="bg-white rounded-xl shadow p-4 mb-4">
-            <h3 className="font-bold text-sm mb-2 text-green-700 flex items-center gap-2"><DollarSign size={16} /> Cobro de Tarjetas</h3>
-            {deudasTarjetas.map(d => (
-              <div key={d.deuda_id} className="flex justify-between items-center p-2 border-b last:border-0 text-xs">
-                <div>
-                  <p className="font-bold">{d.jugador_nombre}</p>
-                  <p>{d.tipo_sancion.toUpperCase()} - ${d.monto}</p>
+          <div className="bg-gray-800 rounded-2xl shadow-xl border border-gray-700 overflow-hidden mb-4">
+            <div className="bg-green-900/50 p-3 border-b border-gray-700 flex items-center gap-2">
+              <DollarSign size={18} className="text-green-400" />
+              <h3 className="font-bold text-sm text-green-400">Cobro de Tarjetas</h3>
+            </div>
+            <div className="divide-y divide-gray-700">
+              {deudasTarjetas.map(d => (
+                <div key={d.deuda_id} className="flex justify-between items-center p-3 text-sm">
+                  <div>
+                    <p className="font-bold text-gray-200">{d.jugador_nombre}</p>
+                    <p className="text-xs text-gray-400">{d.tipo_sancion.toUpperCase()} - ${d.monto}</p>
+                  </div>
+                  {d.cancelado ? (
+                    <span className="text-green-500 font-bold text-xs bg-green-500/10 px-2 py-1 rounded">CANCELADO</span>
+                  ) : (
+                    <button onClick={() => { setMontoCobro(d.monto.toString()); setModalCobro(d) }} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition-colors">Cobrar</button>
+                  )}
                 </div>
-                {d.cancelado ? (
-                  <span className="text-green-600 font-bold">CANCELADO</span>
-                ) : (
-                  <button onClick={() => { setMontoCobro(d.monto.toString()); setModalCobro(d) }} className="bg-green-600 text-white px-3 py-1 rounded">Cobrar</button>
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
 
+        {/* BOTÓN DESCARGA PDF (Solo Admin) */}
         {partido.jugado && esAdmin && (
-          <button onClick={descargarPDF} className="w-full mt-3 py-4 rounded-xl font-bold text-lg shadow-lg bg-gray-800 text-white hover:bg-black flex items-center justify-center gap-2">
+          <button onClick={descargarPDF} className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-blue-600 text-white hover:bg-blue-500 flex items-center justify-center gap-2 transition-colors">
             <Printer size={20} /> Descargar / Imprimir Acta PDF
           </button>
         )}
       </main>
 
-      <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t shadow-lg z-20">
-        <button onClick={iniciarCierre} disabled={partido.jugado || finalizando} className={`w-full py-3 rounded-xl font-bold ${partido.jugado ? 'bg-gray-300 text-gray-500' : 'bg-red-600 text-white hover:bg-red-700'}`}>
+      {/* BOTÓN FINALIZAR FLOTANTE */}
+      <div className="fixed bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-700 shadow-2xl z-20">
+        <button onClick={iniciarCierre} disabled={partido.jugado || finalizando} className={`w-full py-4 rounded-xl font-black text-lg shadow-lg transition-all ${partido.jugado ? 'bg-gray-800 text-gray-500' : 'bg-red-600 text-white hover:bg-red-500'}`}>
           {finalizando ? 'Procesando...' : partido.jugado ? 'Acta Finalizada' : 'Finalizar Partido y Firmar Acta'}
         </button>
       </div>
 
       {/* MODAL JUGADOR (Eventos) */}
       {jugadorSeleccionado && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-4">
-          <div className="bg-white rounded-t-2xl sm:rounded-xl w-full max-w-sm p-4">
-            <div className="flex justify-between items-center mb-3">
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-gray-800 rounded-t-3xl sm:rounded-2xl w-full max-w-sm p-5 border border-gray-700 shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
               <div>
-                <h3 className="font-bold text-lg leading-tight">{jugadorSeleccionado.jugador.apellidos} {jugadorSeleccionado.jugador.nombres}</h3>
-                <p className="text-xs text-gray-500">Periodo {periodoActual}</p>
+                <h3 className="font-bold text-lg text-white leading-tight">{jugadorSeleccionado.jugador.apellidos} {jugadorSeleccionado.jugador.nombres}</h3>
+                <p className="text-xs text-liga-amarillo font-semibold">Periodo {periodoActual}</p>
               </div>
-              <button onClick={() => setJugadorSeleccionado(null)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={20}/></button>
+              <button onClick={() => setJugadorSeleccionado(null)} className="p-2 bg-gray-700 rounded-full hover:bg-gray-600 text-gray-300"><X size={20}/></button>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => registrarEvento('gol')} className="bg-green-600 text-white p-3 rounded-lg font-bold">Gol</button>
-              <button onClick={() => registrarEvento('amarilla')} className="bg-yellow-500 text-black p-3 rounded-lg font-bold">Amarilla</button>
-              <button onClick={() => registrarEvento('roja')} className="bg-red-600 text-white p-3 rounded-lg font-bold">Roja</button>
-              <button onClick={registrarFalta} className="bg-orange-500 text-white p-3 rounded-lg font-bold">Falta</button>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => registrarEvento('gol')} className="bg-green-600 hover:bg-green-500 text-white p-4 rounded-xl font-black text-lg shadow-lg flex flex-col items-center gap-1 transition-colors">
+                <span className="text-2xl">⚽</span> Gol
+              </button>
+              <button onClick={() => abrirModalTarjeta('amarilla')} className="bg-yellow-500 hover:bg-yellow-400 text-black p-4 rounded-xl font-black text-lg shadow-lg flex flex-col items-center gap-1 transition-colors">
+                <span className="text-2xl">🟨</span> Amarilla
+              </button>
+              <button onClick={() => abrirModalTarjeta('roja')} className="bg-red-600 hover:bg-red-500 text-white p-4 rounded-xl font-black text-lg shadow-lg flex flex-col items-center gap-1 transition-colors">
+                <span className="text-2xl">🟥</span> Roja
+              </button>
+              <button onClick={registrarFalta} className="bg-orange-500 hover:bg-orange-400 text-white p-4 rounded-xl font-black text-lg shadow-lg flex flex-col items-center gap-1 transition-colors">
+                <span className="text-2xl">⚠️</span> Falta
+              </button>
             </div>
-            <div className="mt-4 text-xs space-y-1 max-h-32 overflow-y-auto">
-              <p className="font-bold">Eventos del jugador:</p>
+            
+            <div className="mt-5 text-xs space-y-2 max-h-32 overflow-y-auto bg-gray-900 p-3 rounded-xl border border-gray-700">
+              <p className="font-bold text-gray-400 uppercase">Historial:</p>
               {eventos.filter(e => e.jugador_id === jugadorSeleccionado.jugador.id).map(e => (
-                <p key={e.id} className="text-gray-600">{e.tipo.toUpperCase()} — min {e.minuto} (P{e.periodo})</p>
+                <p key={e.id} className="text-green-400 font-semibold flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-400"></span> GOL — min {e.minuto} (P{e.periodo})</p>
               ))}
               {faltas.filter(f => f.jugador_id === jugadorSeleccionado.jugador.id).map(f => (
-                <p key={f.id} className="text-orange-600">FALTA — min {f.minuto} (P{f.periodo})</p>
+                <p key={f.id} className={`font-semibold flex items-center gap-2 ${f.tipo === 'amarilla' ? 'text-yellow-400' : f.tipo === 'roja' ? 'text-red-400' : 'text-orange-400'}`}>
+                  <span className={`w-2 h-2 rounded-full ${f.tipo === 'amarilla' ? 'bg-yellow-400' : f.tipo === 'roja' ? 'bg-red-400' : 'bg-orange-400'}`}></span>
+                  {f.tipo.toUpperCase()} — min {f.minuto} (P{f.periodo})
+                </p>
               ))}
+              {eventos.filter(e => e.jugador_id === jugadorSeleccionado.jugador.id).length === 0 && faltas.filter(f => f.jugador_id === jugadorSeleccionado.jugador.id).length === 0 && (
+                <p className="text-gray-500 italic">Sin eventos registrados</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CAUSA TARJETA */}
+      {modalTarjeta && (
+        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-gray-800 rounded-2xl w-full max-w-sm p-5 border border-gray-700 shadow-2xl">
+            <h3 className="font-bold text-lg text-white mb-2">Causa de la Tarjeta {modalTarjeta.tipo.toUpperCase()}</h3>
+            <p className="text-xs text-gray-400 mb-4">Escribe el motivo (Ej: Juego brusco, Insultos, etc.)</p>
+            <input
+              type="text"
+              value={causaTarjeta}
+              onChange={(e) => setCausaTarjeta(e.target.value)}
+              className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-xl text-white focus:outline-none focus:border-liga-amarillo"
+              placeholder="Motivo..."
+              autoFocus
+            />
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setModalTarjeta(null)} className="flex-1 py-3 border border-gray-600 text-gray-300 rounded-xl font-semibold hover:bg-gray-700 transition-colors">Cancelar</button>
+              <button onClick={confirmarTarjeta} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-500 transition-colors">Guardar</button>
             </div>
           </div>
         </div>
@@ -612,17 +718,17 @@ export default function PartidoVivo() {
 
       {/* MODAL DORSAL */}
       {modalDorsal && (
-        <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5">
-            <h3 className="font-bold text-lg mb-1">Cambiar dorsal</h3>
-            <p className="text-xs text-gray-500 mb-3">{modalDorsal.jugadorNombre}</p>
+        <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-gray-800 rounded-2xl w-full max-w-sm p-5 border border-gray-700 shadow-2xl">
+            <h3 className="font-bold text-lg text-white mb-1">Cambiar dorsal</h3>
+            <p className="text-xs text-gray-400 mb-3">{modalDorsal.jugadorNombre}</p>
             <input
               type="number" min="1" max="99" value={dorsalInput} onChange={(e) => setDorsalInput(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-2xl font-bold text-center" autoFocus
+              className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-xl text-white text-3xl font-black text-center focus:outline-none focus:border-liga-amarillo" autoFocus
             />
-            <div className="flex gap-2 mt-4">
-              <button onClick={() => setModalDorsal(null)} className="flex-1 py-2 border rounded-lg font-semibold">Cancelar</button>
-              <button onClick={guardarDorsal} disabled={guardandoDorsal} className="flex-1 py-2 bg-liga-verde text-white rounded-lg font-bold disabled:opacity-50">
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setModalDorsal(null)} className="flex-1 py-3 border border-gray-600 text-gray-300 rounded-xl font-semibold hover:bg-gray-700 transition-colors">Cancelar</button>
+              <button onClick={guardarDorsal} disabled={guardandoDorsal} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold disabled:opacity-50 hover:bg-blue-500 transition-colors">
                 {guardandoDorsal ? '...' : 'Guardar'}
               </button>
             </div>
@@ -632,18 +738,18 @@ export default function PartidoVivo() {
 
       {/* MODAL COBRO */}
       {modalCobro && (
-        <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5">
-            <h3 className="font-bold text-lg mb-1">Registrar pago</h3>
-            <p className="text-xs text-gray-500 mb-1">{modalCobro.jugador_nombre} — {modalCobro.tipo_sancion?.toUpperCase()}</p>
-            <p className="text-xs mb-3">Pendiente: ${(modalCobro.monto - modalCobro.monto_pagado).toFixed(2)}</p>
+        <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-gray-800 rounded-2xl w-full max-w-sm p-5 border border-gray-700 shadow-2xl">
+            <h3 className="font-bold text-lg text-white mb-1">Registrar pago</h3>
+            <p className="text-xs text-gray-400 mb-1">{modalCobro.jugador_nombre} — {modalCobro.tipo_sancion?.toUpperCase()}</p>
+            <p className="text-xs text-liga-amarillo font-bold mb-3">Pendiente: ${(modalCobro.monto - modalCobro.monto_pagado).toFixed(2)}</p>
             <input
               type="number" min="0.01" step="0.01" value={montoCobro} onChange={(e) => setMontoCobro(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-2xl font-bold text-center" autoFocus
+              className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-xl text-white text-2xl font-bold text-center focus:outline-none focus:border-green-500" autoFocus
             />
-            <div className="flex gap-2 mt-4">
-              <button onClick={() => setModalCobro(null)} className="flex-1 py-2 border rounded-lg font-semibold">Cancelar</button>
-              <button onClick={confirmarCobro} disabled={cobrando} className="flex-1 py-2 bg-liga-verde text-white rounded-lg font-bold disabled:opacity-50">
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setModalCobro(null)} className="flex-1 py-3 border border-gray-600 text-gray-300 rounded-xl font-semibold hover:bg-gray-700 transition-colors">Cancelar</button>
+              <button onClick={confirmarCobro} disabled={cobrando} className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold disabled:opacity-50 hover:bg-green-500 transition-colors">
                 {cobrando ? '...' : 'Cobrar'}
               </button>
             </div>
