@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { db } from '../lib/db'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Play, Pause, RotateCcw, Printer, Pencil, DollarSign, X, UserCheck } from 'lucide-react'
+import { ArrowLeft, Play, Pause, RotateCcw, Printer, Pencil, DollarSign, X, UserCheck, Lock } from 'lucide-react'
 import { sincronizarPartido } from '../lib/sincronizarPartido'
 import FirmaModal from '../components/FirmaModal'
 import jsPDF from 'jspdf'
@@ -31,7 +31,7 @@ export default function PartidoVivo() {
   const [deudasTarjetas, setDeudasTarjetas] = useState([])
 
   const [jugadorSeleccionado, setJugadorSeleccionado] = useState(null)
-  const [modalTarjeta, setModalTarjeta] = useState(null) // { tipo: 'amarilla' | 'roja' }
+  const [modalTarjeta, setModalTarjeta] = useState(null)
   const [causaTarjeta, setCausaTarjeta] = useState('')
   
   const [finalizando, setFinalizando] = useState(false)
@@ -72,7 +72,7 @@ export default function PartidoVivo() {
   }, [relojCorriendo])
 
   useEffect(() => {
-    async function cargarDatosOffline() {
+    async function cargarDatos() {
       try {
         const { data: { session } } = await supabase.auth.getSession()
         const userId = session?.user?.id
@@ -117,7 +117,7 @@ export default function PartidoVivo() {
         setFaltas(await db.faltas.where('partido_id').equals(id).toArray())
         setCarnets(await db.carnets.toArray())
         setFirmas(await db.firmas.where('partido_id').equals(id).toArray())
-
+        
         if (navigator.onLine) {
           const { data: deudas } = await supabase.rpc('obtener_deudas_tarjetas_partido', { p_partido_id: id })
           setDeudasTarjetas(deudas || [])
@@ -128,39 +128,20 @@ export default function PartidoVivo() {
         setCargando(false)
       }
     }
-    cargarDatosOffline()
+    cargarDatos()
   }, [id])
 
-  function jugadorBloqueado(jugadorId) {
+  // Calcula si el jugador está bloqueado
+  function estaBloqueado(jugadorId) {
     const carnet = carnets.find(c => c.jugador_id === jugadorId)
-    return {
-      bloqueado: carnet && carnet.valido === false,
-      motivo: carnet?.motivo_bloqueo || null
-    }
-  }
-
-    async function toggleTitular(jugadorId, equipoId) {
-    if (partido.jugado) return toast.error('El acta ya está finalizada')
-    const plan = equipoId === partido.equipo_local_id ? planillaLocal : planillaVisitante
-    const insc = plan.find(pl => pl.jugador_id === jugadorId)
-    if (!insc) return
-    const nuevoEstado = !insc.es_titular
-    await db.planilla.update(insc.id, { es_titular: nuevoEstado, sync_status: 'pending' })
-    if (equipoId === partido.equipo_local_id) {
-      setPlanillaLocal(prev => prev.map(p => p.id === insc.id ? { ...p, es_titular: nuevoEstado } : p))
-    } else {
-      setPlanillaVisitante(prev => prev.map(p => p.id === insc.id ? { ...p, es_titular: nuevoEstado } : p))
-    }
-    if (navigator.onLine) {
-      await supabase.from('planilla_partido').update({ es_titular: nuevoEstado }).eq('id', insc.id)
-    }
+    return carnet && carnet.valido === false
   }
 
   async function registrarEvento(tipo) {
     if (!jugadorSeleccionado || partido.jugado) return
     const { jugador, equipoId } = jugadorSeleccionado
-    const bloq = jugadorBloqueado(jugador.id)
-    if (bloq.bloqueado) return toast.error(`Jugador bloqueado: ${bloq.motivo}`)
+    
+    if (estaBloqueado(jugador.id)) return toast.error('El jugador está bloqueado por sanción')
 
     try {
       await db.eventos.add({
@@ -179,8 +160,7 @@ export default function PartidoVivo() {
   async function registrarFalta() {
     if (!jugadorSeleccionado || partido.jugado) return
     const { jugador, equipoId } = jugadorSeleccionado
-    const bloq = jugadorBloqueado(jugador.id)
-    if (bloq.bloqueado) return toast.error(`Jugador bloqueado: ${bloq.motivo}`)
+    if (estaBloqueado(jugador.id)) return toast.error('El jugador está bloqueado')
 
     const faltasJugador = faltas.filter(f => f.jugador_id === jugador.id && f.periodo === periodoActual && f.tipo === 'personal')
     if (faltasJugador.length >= 5) return toast.error('Límite de 5 faltas alcanzado')
@@ -204,7 +184,6 @@ export default function PartidoVivo() {
     }
   }
 
-  // --- TARJETAS (Abre modal para causa) ---
   function abrirModalTarjeta(tipo) {
     if (partido.jugado) return toast.error('Acta finalizada')
     setCausaTarjeta('')
@@ -231,7 +210,6 @@ export default function PartidoVivo() {
     }
   }
 
-  // --- DORSAL ---
   function abrirModalDorsal(jugadorId, equipoId, jugadorNombre, dorsalActual) {
     setDorsalInput(dorsalActual ? String(dorsalActual) : '')
     setModalDorsal({ jugadorId, equipoId, jugadorNombre })
@@ -262,7 +240,23 @@ export default function PartidoVivo() {
     } finally { setGuardandoDorsal(false) }
   }
 
-  // --- CAPITAN ---
+  async function toggleTitular(jugadorId, equipoId) {
+    if (partido.jugado) return toast.error('Acta finalizada')
+    const plan = equipoId === partido.equipo_local_id ? planillaLocal : planillaVisitante
+    const insc = plan.find(pl => pl.jugador_id === jugadorId)
+    if (!insc) return
+    const nuevoEstado = !insc.es_titular
+    await db.planilla.update(insc.id, { es_titular: nuevoEstado, sync_status: 'pending' })
+    if (equipoId === partido.equipo_local_id) {
+      setPlanillaLocal(prev => prev.map(p => p.id === insc.id ? { ...p, es_titular: nuevoEstado } : p))
+    } else {
+      setPlanillaVisitante(prev => prev.map(p => p.id === insc.id ? { ...p, es_titular: nuevoEstado } : p))
+    }
+    if (navigator.onLine) {
+      await supabase.from('planilla_partido').update({ es_titular: nuevoEstado }).eq('id', insc.id)
+    }
+  }
+
   async function marcarCapitan(jugadorId, equipoId) {
     if (partido.jugado) return toast.error('Acta finalizada')
     if (rolUsuario !== 'vocal') return toast.error('Solo el vocal designa capitán')
@@ -278,7 +272,6 @@ export default function PartidoVivo() {
     if (insc) {
       await db.planilla.update(insc.id, { es_capitan: !yaEsCapitan, sync_status: 'pending' })
     }
-
     if (equipoId === partido.equipo_local_id) {
       setPlanillaLocal(prev => prev.map(p => ({ ...p, es_capitan: p.jugador_id === jugadorId ? !yaEsCapitan : false })))
     } else {
@@ -287,7 +280,6 @@ export default function PartidoVivo() {
     toast.success(yaEsCapitan ? 'Capitanía removida' : 'Capitán designado')
   }
 
-  // --- COBRO ---
   async function confirmarCobro() {
     const monto = parseFloat(montoCobro)
     if (!monto || monto <= 0) return toast.error('Monto inválido')
@@ -304,7 +296,6 @@ export default function PartidoVivo() {
     } finally { setCobrando(false) }
   }
 
-  // --- FIRMAS ---
   function iniciarCierre() {
     if (!window.confirm('¿Deseas finalizar el partido? Se procederá a firmar el acta.')) return
     setRelojCorriendo(false)
@@ -341,7 +332,7 @@ export default function PartidoVivo() {
       setPartido(prev => ({ ...prev, jugado: true, observaciones: textoNovedades }))
 
       if (navigator.onLine) {
-        try { await sincronizarPartido(id) } catch (e) { console.error(e) }
+        try { await sincronizarPartido(id) } catch (e) { console.error("Error sync:", e) }
       }
       toast.success('Acta finalizada')
     } catch {
@@ -549,20 +540,21 @@ export default function PartidoVivo() {
                   const amarillasJug = faltas.filter(f => f.jugador_id === j.id && f.tipo === 'amarilla').length
                   const rojasJug = faltas.filter(f => f.jugador_id === j.id && f.tipo === 'roja').length
                   const puedeEditar = rolUsuario === 'vocal' && !partido.jugado
+                  const bloqueado = estaBloqueado(j.id)
                   
                   return (
-                    <div key={j.id} className="flex items-center gap-2 p-3 hover:bg-gray-750 transition-colors">
+                    <div key={j.id} className={`flex items-center gap-2 p-3 transition-colors ${bloqueado ? 'opacity-50 bg-gray-900/50' : 'hover:bg-gray-750'}`}>
                       
                       {/* BOTÓN DORSAL */}
                       <button
                         onClick={() => puedeEditar && abrirModalDorsal(j.id, equipoId, `${j.apellidos} ${j.nombres}`, insc?.dorsal)}
-                        disabled={!puedeEditar}
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg shadow-inner ${puedeEditar ? 'bg-gray-700 text-liga-amarillo hover:bg-gray-600' : 'bg-gray-800 text-gray-500'}`}
+                        disabled={!puedeEditar || bloqueado}
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg shadow-inner ${puedeEditar && !bloqueado ? 'bg-gray-700 text-liga-amarillo hover:bg-gray-600' : 'bg-gray-800 text-gray-500'}`}
                       >
                         {insc?.dorsal || '-'}
                       </button>
 
-                      {puedeEditar && (
+                      {puedeEditar && !bloqueado && (
                         <button onClick={() => abrirModalDorsal(j.id, equipoId, `${j.apellidos} ${j.nombres}`, insc?.dorsal)} className="p-1 text-gray-500 hover:text-blue-400">
                           <Pencil size={16} />
                         </button>
@@ -570,11 +562,17 @@ export default function PartidoVivo() {
 
                       {/* NOMBRE Y EVENTOS */}
                       <button
-                        onClick={() => !partido.jugado && setJugadorSeleccionado({ jugador: j, equipoId })}
+                        onClick={() => {
+                          if (bloqueado) return toast.error('El jugador está bloqueado por sanción')
+                          if (!partido.jugado) setJugadorSeleccionado({ jugador: j, equipoId })
+                        }}
                         disabled={partido.jugado}
                         className="flex-1 text-left disabled:opacity-50"
                       >
-                        <p className="text-sm font-bold uppercase text-gray-200">{j.apellidos} {j.nombres}</p>
+                        <p className="text-sm font-bold uppercase text-gray-200 flex items-center gap-2">
+                          {j.apellidos} {j.nombres}
+                          {bloqueado && <Lock size={12} className="text-red-500" />}
+                        </p>
                         <div className="flex gap-2 mt-1 text-xs">
                           {golesJug > 0 && <span className="text-green-400 font-bold">⚽ {golesJug}</span>}
                           {amarillasJug > 0 && <span className="text-yellow-400 font-bold">🟨 {amarillasJug}</span>}
@@ -584,7 +582,7 @@ export default function PartidoVivo() {
                       </button>
 
                       {/* BOTÓN CAPITÁN */}
-                      {puedeEditar && (
+                      {puedeEditar && !bloqueado && (
                         <button
                           onClick={(e) => { e.stopPropagation(); marcarCapitan(j.id, equipoId) }}
                           className={`p-2 rounded-lg ${insc?.es_capitan ? 'bg-liga-amarillo text-black' : 'bg-gray-700 text-gray-400'}`}
@@ -596,7 +594,7 @@ export default function PartidoVivo() {
                       {/* BOTÓN TITULAR/SUPLENTE */}
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleTitular(j.id, equipoId) }}
-                        disabled={!puedeEditar}
+                        disabled={!puedeEditar || bloqueado}
                         className={`text-xs px-3 py-2 rounded-lg font-bold disabled:opacity-50 ${insc?.es_titular ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400'}`}
                       >
                         {insc?.es_titular ? 'TIT' : 'SUP'}
