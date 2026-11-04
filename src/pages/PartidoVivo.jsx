@@ -3,11 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { db } from '../lib/db'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Play, Pause, RotateCcw, Printer, Pencil, DollarSign, X, UserCheck, Lock } from 'lucide-react'
+import { ArrowLeft, Play, Pause, RotateCcw, Pencil, DollarSign, X, UserCheck, Lock } from 'lucide-react'
 import { sincronizarPartido } from '../lib/sincronizarPartido'
 import FirmaModal from '../components/FirmaModal'
-import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
 
 export default function PartidoVivo() {
   const { id } = useParams()
@@ -18,7 +16,7 @@ export default function PartidoVivo() {
   const [equipoLocal, setEquipoLocal] = useState(null)
   const [equipoVisitante, setEquipoVisitante] = useState(null)
   const [rolUsuario, setRolUsuario] = useState(null)
-  const [esAdmin, setEsAdmin] = useState(false)
+  
 
   const [jugadoresLocal, setJugadoresLocal] = useState([])
   const [jugadoresVisitante, setJugadoresVisitante] = useState([])
@@ -27,7 +25,6 @@ export default function PartidoVivo() {
   const [planillaLocal, setPlanillaLocal] = useState([])
   const [planillaVisitante, setPlanillaVisitante] = useState([])
   const [carnets, setCarnets] = useState([])
-  const [firmas, setFirmas] = useState([])
   const [deudasTarjetas, setDeudasTarjetas] = useState([])
 
   const [jugadorSeleccionado, setJugadorSeleccionado] = useState(null)
@@ -50,6 +47,25 @@ export default function PartidoVivo() {
   const [modalCobro, setModalCobro] = useState(null)
   const [montoCobro, setMontoCobro] = useState('')
   const [cobrando, setCobrando] = useState(false)
+
+  const causasAmarilla = [
+    'Infracción persistente de las reglas',
+    'Desaprobación del manual de arbitraje',
+    'Conducta antideportiva',
+    'Mal uniformado'
+  ]
+
+  const causasRoja = [
+    'Demorar el juego deliberadamente',
+    'Conducta incorrecta en el campo',
+    'Impedir oportunidad de gol',
+    'Doble amarilla',
+    'Juego violento o brusco',
+    'Lanzar balón a un rival',
+    'Agresión mutua',
+    'Agresión en disputa del balón',
+    'Insultos a rival/dirigente/árbitro'
+  ]
 
   useEffect(() => {
     let intervalo = null
@@ -95,9 +111,7 @@ export default function PartidoVivo() {
 
         if (p.vocal_id === userId) setRolUsuario('vocal')
         else setRolUsuario('arbitro')
-
-        const { data: usuarioData } = await supabase.from('usuarios').select('rol').eq('id', userId).single()
-        setEsAdmin(['admin', 'secretaria'].includes(usuarioData?.rol))
+        
 
         const local = await db.equipos.get(p.equipo_local_id)
         const visitante = await db.equipos.get(p.equipo_visitante_id)
@@ -116,10 +130,11 @@ export default function PartidoVivo() {
         setEventos(await db.eventos.where('partido_id').equals(id).toArray())
         setFaltas(await db.faltas.where('partido_id').equals(id).toArray())
         setCarnets(await db.carnets.toArray())
-        setFirmas(await db.firmas.where('partido_id').equals(id).toArray())
+        
         
         if (navigator.onLine) {
-          const { data: deudas } = await supabase.rpc('obtener_deudas_tarjetas_partido', { p_partido_id: id })
+          const { data: deudas, error } = await supabase.rpc('obtener_deudas_tarjetas_partido', { p_partido_id: id })
+          if (error) console.error("Error deudas:", error)
           setDeudasTarjetas(deudas || [])
         }
       } catch (err) {
@@ -131,7 +146,9 @@ export default function PartidoVivo() {
     cargarDatos()
   }, [id])
 
-  // Calcula si el jugador está bloqueado
+  const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido?.equipo_local_id).length
+  const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido?.equipo_visitante_id).length
+
   function estaBloqueado(jugadorId) {
     const carnet = carnets.find(c => c.jugador_id === jugadorId)
     return carnet && carnet.valido === false
@@ -140,7 +157,6 @@ export default function PartidoVivo() {
   async function registrarEvento(tipo) {
     if (!jugadorSeleccionado || partido.jugado) return
     const { jugador, equipoId } = jugadorSeleccionado
-    
     if (estaBloqueado(jugador.id)) return toast.error('El jugador está bloqueado por sanción')
 
     try {
@@ -195,11 +211,13 @@ export default function PartidoVivo() {
     const { jugador, equipoId } = jugadorSeleccionado
     const { tipo } = modalTarjeta
 
+    if (!causaTarjeta) return toast.error('Selecciona una causa')
+
     try {
       await db.faltas.add({
         partido_id: id, jugador_id: jugador.id, equipo_id: equipoId, tipo: tipo,
         minuto: Math.floor((22 * 60 - tiempoRestante) / 60) + (periodoActual === 1 ? 0 : 22),
-        periodo: periodoActual, causa: causaTarjeta || 'Sin causa especificada', sync_status: 'pending'
+        periodo: periodoActual, causa: causaTarjeta, sync_status: 'pending'
       })
       setFaltas(await db.faltas.where('partido_id').equals(id).toArray())
       setJugadorSeleccionado(null)
@@ -342,158 +360,6 @@ export default function PartidoVivo() {
     }
   }
 
-  // ================= PDF DE LA PWA =================
-    function descargarPDF() {
-    try {
-      const doc = new jsPDF()
-      const p = partido
-      
-      // Limpiador para evitar símbolos raros (ñ, tildes)
-      const sanitize = (s) => {
-        if (!s) return '';
-        return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, 'n').trim();
-      }
-
-      const dibujarEncabezado = (pagina) => {
-        doc.setFont("helvetica", "bold"); doc.setFontSize(14)
-        doc.text('LIGA DEPORTIVA BARRIAL JOSE I. IZURIETA', 105, 15, { align: 'center' })
-        doc.setFontSize(9); doc.setFont("helvetica", "normal")
-        doc.text('PUJILI - ECUADOR', 105, 20, { align: 'center' })
-        doc.text('FUNDADA EL 09 DE MARZO DEL 2013', 20, 26)
-        doc.text('ACUERDO MUNICIPAL NO. 034-GADMP-2013', 130, 26)
-        doc.line(15, 28, 195, 28)
-        doc.setFont("helvetica", "bold"); doc.setFontSize(12)
-        doc.text(`ACTA DE JUEGO - PAGINA ${pagina}`, 105, 35, { align: 'center' })
-      }
-
-      dibujarEncabezado(1)
-      doc.setFontSize(9); doc.setFont("helvetica", "normal")
-      
-      const fechaStr = p.fecha_inicio ? new Date(p.fecha_inicio + 'T00:00:00').toLocaleDateString('es-EC') : '--/--/----'
-      doc.text(`VOCAL DE TURNO: ${sanitize(p.vocal_nombre) || '____________________'}`, 15, 45)
-      doc.text('CIUDAD: Pujili', 100, 45)
-      doc.text(`FECHA: ${fechaStr}`, 145, 45)
-      doc.text(`HORA: ${p.hora?.slice(0,5) || '________'}`, 15, 51)
-      doc.text(`ARBITRO: ${sanitize(p.arbitro_nombre) || '____________________'}`, 100, 51)
-
-      doc.setFont("helvetica", "bold")
-      doc.text(`CLUB: ${sanitize(equipoLocal?.nombre?.toUpperCase())}`, 15, 60)
-      doc.text(`CATEGORIA: ${sanitize(equipoLocal?.categoria?.toUpperCase())}`, 100, 60)
-
-      const filasLocal = jugadoresLocal.filter(j => planillaLocal.some(pl => pl.jugador_id === j.id)).map(j => {
-        const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
-        const amarillas = faltas.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
-        const rojas = faltas.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [planillaLocal.find(pl => pl.jugador_id === j.id)?.dorsal || '-', sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
-      })
-
-      autoTable(doc, {
-        startY: 63, head: [['NO.', 'NOMBRES DE JUGADORES', 'GOL', 'T.A.', 'T.R.']], body: filasLocal, theme: 'grid',
-        headStyles: { fillColor: [200,200,200], textColor: [0,0,0], fontStyle: 'bold' },
-        styles: { fontSize: 8, cellPadding: 1.5, font: 'helvetica' },
-        columnStyles: { 0:{cellWidth:15,halign:'center'}, 1:{cellWidth:110}, 2:{cellWidth:15,halign:'center'}, 3:{cellWidth:15,halign:'center'}, 4:{cellWidth:15,halign:'center'} }
-      })
-
-      let finalY = doc.lastAutoTable.finalY + 10
-      doc.setFont("helvetica", "bold")
-      doc.text(`CLUB: ${sanitize(equipoVisitante?.nombre?.toUpperCase())}`, 15, finalY)
-      doc.text(`CATEGORIA: ${sanitize(equipoVisitante?.categoria?.toUpperCase())}`, 100, finalY)
-
-      const filasVisitante = jugadoresVisitante.filter(j => planillaVisitante.some(pl => pl.jugador_id === j.id)).map(j => {
-        const goles = eventos.filter(e => e.tipo === 'gol' && e.jugador_id === j.id).length
-        const amarillas = faltas.filter(e => e.tipo === 'amarilla' && e.jugador_id === j.id).length
-        const rojas = faltas.filter(e => e.tipo === 'roja' && e.jugador_id === j.id).length
-        return [planillaVisitante.find(pl => pl.jugador_id === j.id)?.dorsal || '-', sanitize(`${j.apellidos} ${j.nombres}`), goles > 0 ? goles.toString() : '', amarillas > 0 ? 'X' : '', rojas > 0 ? 'X' : '']
-      })
-
-      autoTable(doc, {
-        startY: finalY + 3, head: [['NO.', 'NOMBRES DE JUGADORES', 'GOL', 'T.A.', 'T.R.']], body: filasVisitante, theme: 'grid',
-        headStyles: { fillColor: [200,200,200], textColor: [0,0,0], fontStyle: 'bold' },
-        styles: { fontSize: 8, cellPadding: 1.5, font: 'helvetica' },
-        columnStyles: { 0:{cellWidth:15,halign:'center'}, 1:{cellWidth:110}, 2:{cellWidth:15,halign:'center'}, 3:{cellWidth:15,halign:'center'}, 4:{cellWidth:15,halign:'center'} }
-      })
-
-      doc.addPage(); dibujarEncabezado(2); doc.setFontSize(9); doc.setFont("helvetica", "normal")
-      
-      let nextY = 45
-      const tarjetasLocal = faltas.filter(f => f.equipo_id === p.equipo_local_id && (f.tipo === 'amarilla' || f.tipo === 'roja'))
-      const tarjetasVisitante = faltas.filter(f => f.equipo_id === p.equipo_visitante_id && (f.tipo === 'amarilla' || f.tipo === 'roja'))
-
-      const dibujarTarjetas = (startY, nombreClub, tarjetas) => {
-        doc.setFont("helvetica", "bold")
-        doc.text(`TARJETAS DEL CLUB: ${sanitize(nombreClub?.toUpperCase())}`, 15, startY)
-        let y = startY + 6
-        doc.setFont("helvetica", "normal")
-        if(tarjetas.length === 0) {
-           doc.text('Sin tarjetas registradas.', 15, y)
-           return y + 10
-        }
-        tarjetas.forEach((t, i) => {
-           const jug = [...jugadoresLocal, ...jugadoresVisitante].find(j => j.id === t.jugador_id)
-           const dorsal = (t.equipo_id === p.equipo_local_id ? planillaLocal : planillaVisitante).find(pl => pl.jugador_id === t.jugador_id)?.dorsal || '-'
-           doc.text(`MIN ${t.minuto}: ${sanitize(jug?.apellidos)} ${sanitize(jug?.nombres)} (${t.tipo.toUpperCase()}) - DORSAL ${dorsal} - CAUSA: ${sanitize(t.causa || 'No especificada')}`, 15, y + (i*6))
-        })
-        return y + (tarjetas.length * 6) + 10
-      }
-
-      nextY = dibujarTarjetas(nextY, equipoLocal?.nombre, tarjetasLocal)
-      nextY = dibujarTarjetas(nextY, equipoVisitante?.nombre, tarjetasVisitante)
-
-      doc.setFont("helvetica", "bold"); doc.text('NOVEDADES:', 15, nextY); doc.setFont("helvetica", "normal")
-      const splitText = doc.splitTextToSize(sanitize(p.observaciones || 'Sin novedades.'), 175)
-      doc.text(splitText, 15, nextY + 6)
-      
-      let lineY = nextY + 6 + (splitText.length * 5) + 10
-      const firmaY = lineY + 85
-
-      // AQUI ESTABA EL ERROR: Se usaba 'firmas' pero no estaba declarado correctamente
-      const fArbitro = firmas.find(f => f.tipo_firmante === 'arbitro')
-      const fCapLocal = firmas.find(f => f.tipo_firmante === 'local')
-      const fCapVisitante = firmas.find(f => f.tipo_firmante === 'visitante')
-      const fVocal = firmas.find(f => f.tipo_firmante === 'vocal')
-
-      const capLocalPlan = planillaLocal.find(pl => pl.es_capitan)
-      const capVisitPlan = planillaVisitante.find(pl => pl.es_capitan)
-      const nombreCapLocal = capLocalPlan ? `${jugadoresLocal.find(j => j.id === capLocalPlan.jugador_id)?.apellidos} ${jugadoresLocal.find(j => j.id === capLocalPlan.jugador_id)?.nombres}` : ''
-      const nombreCapVisit = capVisitPlan ? `${jugadoresVisitante.find(j => j.id === capVisitPlan.jugador_id)?.apellidos} ${jugadoresVisitante.find(j => j.id === capVisitPlan.jugador_id)?.nombres}` : ''
-
-      const drawImageSafely = (base64, x, y, w, h) => {
-        try { 
-          if (base64) {
-            // Limpieza profunda del base64
-            const cleanB64 = base64.replace(/^data:image\/(png|jpeg|jpg);base64,/, '').replace(/\s/g, '');
-            doc.addImage(cleanB64, "PNG", x, y, w, h, undefined, 'FAST') 
-          }
-        } catch (e) { console.error("Error dibujando firma:", e) }
-      }
-
-      const xPositions = [15, 65, 115, 165]
-      const firmantes = [
-        { nombre: `CAPITAN ${sanitize(equipoLocal?.nombre?.toUpperCase())}`, firma: fCapLocal, persona: nombreCapLocal },
-        { nombre: `CAPITAN ${sanitize(equipoVisitante?.nombre?.toUpperCase())}`, firma: fCapVisitante, persona: nombreCapVisit },
-        { nombre: 'ARBITRO', firma: fArbitro, persona: sanitize(p.arbitro_nombre) },
-        { nombre: 'VOCAL', firma: fVocal, persona: sanitize(p.vocal_nombre) }
-      ]
-
-      firmantes.forEach((item, index) => {
-        const x = xPositions[index]
-        // USAMOS firma_digital (como está en la BD)
-        drawImageSafely(item.firma?.firma_digital, x, firmaY - 20, 30, 15)
-        doc.line(x, firmaY, x + 30, firmaY)
-        doc.setFontSize(7); doc.setFont("helvetica", "bold")
-        doc.text(item.nombre, x + 15, firmaY + 4, { align: 'center' })
-        if (item.persona) { doc.setFont("helvetica", "normal"); doc.setFontSize(6); doc.text(sanitize(item.persona), x + 15, firmaY + 8, { align: 'center' }) }
-      })
-
-      const pdfBlob = doc.output('blob')
-      const url = URL.createObjectURL(pdfBlob)
-      const a = document.createElement('a')
-      a.href = url; a.download = `acta-${p.id?.slice(0,8) || 'partido'}.pdf`
-      document.body.appendChild(a); a.click(); document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-    } catch (err) { console.error('Error generando PDF:', err); toast.error('Error al generar el acta PDF') }
-  }
-
   if (cargando) return <div className="p-8 text-center text-gray-500">Cargando...</div>
 
   return (
@@ -508,9 +374,15 @@ export default function PartidoVivo() {
 
       <main className="p-4 max-w-2xl mx-auto space-y-4">
         
-        {/* MARCADOR FUTURISTA */}
         <div className="bg-gray-800 rounded-2xl shadow-2xl p-6 border border-blue-500/30 text-center relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-liga-amarillo"></div>
+          
+          <div className="flex justify-center items-center gap-4 mb-4">
+            <div className="text-4xl font-black text-white">{golesLocal}</div>
+            <div className="text-2xl font-bold text-gray-500">-</div>
+            <div className="text-4xl font-black text-white">{golesVisitante}</div>
+          </div>
+
           <div className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-liga-amarillo mb-2">
             {Math.floor(tiempoRestante/60)}:{(tiempoRestante%60).toString().padStart(2,'0')}
           </div>
@@ -522,7 +394,6 @@ export default function PartidoVivo() {
           </div>
         </div>
 
-        {/* LISTA DE JUGADORES */}
         {[equipoLocal, equipoVisitante].map((eq, idx) => {
           if (!eq) return null
           const esLocal = idx === 0
@@ -550,9 +421,8 @@ export default function PartidoVivo() {
                   return (
                     <div key={j.id} className={`flex items-center gap-2 p-3 transition-colors ${bloqueado ? 'opacity-50 bg-gray-900/50' : 'hover:bg-gray-750'}`}>
                       
-                      {/* BOTÓN DORSAL */}
                       <button
-                        onClick={() => puedeEditar && abrirModalDorsal(j.id, equipoId, `${j.apellidos} ${j.nombres}`, insc?.dorsal)}
+                        onClick={() => puedeEditar && !bloqueado && abrirModalDorsal(j.id, equipoId, `${j.apellidos} ${j.nombres}`, insc?.dorsal)}
                         disabled={!puedeEditar || bloqueado}
                         className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-lg shadow-inner ${puedeEditar && !bloqueado ? 'bg-gray-700 text-liga-amarillo hover:bg-gray-600' : 'bg-gray-800 text-gray-500'}`}
                       >
@@ -565,7 +435,6 @@ export default function PartidoVivo() {
                         </button>
                       )}
 
-                      {/* NOMBRE Y EVENTOS */}
                       <button
                         onClick={() => {
                           if (bloqueado) return toast.error('El jugador está bloqueado por sanción')
@@ -586,7 +455,6 @@ export default function PartidoVivo() {
                         </div>
                       </button>
 
-                      {/* BOTÓN CAPITÁN */}
                       {puedeEditar && !bloqueado && (
                         <button
                           onClick={(e) => { e.stopPropagation(); marcarCapitan(j.id, equipoId) }}
@@ -596,7 +464,6 @@ export default function PartidoVivo() {
                         </button>
                       )}
 
-                      {/* BOTÓN TITULAR/SUPLENTE */}
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleTitular(j.id, equipoId) }}
                         disabled={!puedeEditar || bloqueado}
@@ -612,7 +479,6 @@ export default function PartidoVivo() {
           )
         })}
 
-        {/* COBRO DE TARJETAS */}
         {deudasTarjetas.length > 0 && (
           <div className="bg-gray-800 rounded-2xl shadow-xl border border-gray-700 overflow-hidden mb-4">
             <div className="bg-green-900/50 p-3 border-b border-gray-700 flex items-center gap-2">
@@ -636,23 +502,14 @@ export default function PartidoVivo() {
             </div>
           </div>
         )}
-
-        {/* BOTÓN DESCARGA PDF (Solo Admin) */}
-        {partido.jugado && esAdmin && (
-          <button onClick={descargarPDF} className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-blue-600 text-white hover:bg-blue-500 flex items-center justify-center gap-2 transition-colors">
-            <Printer size={20} /> Descargar / Imprimir Acta PDF
-          </button>
-        )}
       </main>
 
-      {/* BOTÓN FINALIZAR FLOTANTE */}
       <div className="fixed bottom-0 left-0 right-0 p-4 bg-gray-900 border-t border-gray-700 shadow-2xl z-20">
         <button onClick={iniciarCierre} disabled={partido.jugado || finalizando} className={`w-full py-4 rounded-xl font-black text-lg shadow-lg transition-all ${partido.jugado ? 'bg-gray-800 text-gray-500' : 'bg-red-600 text-white hover:bg-red-500'}`}>
           {finalizando ? 'Procesando...' : partido.jugado ? 'Acta Finalizada' : 'Finalizar Partido y Firmar Acta'}
         </button>
       </div>
 
-      {/* MODAL JUGADOR (Eventos) */}
       {jugadorSeleccionado && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-gray-800 rounded-t-3xl sm:rounded-2xl w-full max-w-sm p-5 border border-gray-700 shadow-2xl">
@@ -697,20 +554,23 @@ export default function PartidoVivo() {
         </div>
       )}
 
-      {/* MODAL CAUSA TARJETA */}
       {modalTarjeta && (
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-gray-800 rounded-2xl w-full max-w-sm p-5 border border-gray-700 shadow-2xl">
             <h3 className="font-bold text-lg text-white mb-2">Causa de la Tarjeta {modalTarjeta.tipo.toUpperCase()}</h3>
-            <p className="text-xs text-gray-400 mb-4">Escribe el motivo (Ej: Juego brusco, Insultos, etc.)</p>
-            <input
-              type="text"
+            <p className="text-xs text-gray-400 mb-4">Selecciona el motivo</p>
+            <select
               value={causaTarjeta}
               onChange={(e) => setCausaTarjeta(e.target.value)}
               className="w-full px-4 py-3 bg-gray-900 border border-gray-600 rounded-xl text-white focus:outline-none focus:border-liga-amarillo"
-              placeholder="Motivo..."
-              autoFocus
-            />
+            >
+              <option value="">Selecciona una causa...</option>
+              {modalTarjeta.tipo === 'amarilla' ? (
+                causasAmarilla.map(c => <option key={c} value={c}>{c}</option>)
+              ) : (
+                causasRoja.map(c => <option key={c} value={c}>{c}</option>)
+              )}
+            </select>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setModalTarjeta(null)} className="flex-1 py-3 border border-gray-600 text-gray-300 rounded-xl font-semibold hover:bg-gray-700 transition-colors">Cancelar</button>
               <button onClick={confirmarTarjeta} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-500 transition-colors">Guardar</button>
@@ -719,7 +579,6 @@ export default function PartidoVivo() {
         </div>
       )}
 
-      {/* MODAL DORSAL */}
       {modalDorsal && (
         <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-gray-800 rounded-2xl w-full max-w-sm p-5 border border-gray-700 shadow-2xl">
@@ -739,7 +598,6 @@ export default function PartidoVivo() {
         </div>
       )}
 
-      {/* MODAL COBRO */}
       {modalCobro && (
         <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-gray-800 rounded-2xl w-full max-w-sm p-5 border border-gray-700 shadow-2xl">
