@@ -323,7 +323,7 @@ export default function PartidoVivo() {
       await db.firmas.where('partido_id').equals(id).delete()
       for (const f of firmasFinales) {
         await db.firmas.add({
-          partido_id: id, tipo_firmante: f.tipo, firma_base64: f.firma,
+          partido_id: id, tipo_firmante: f.tipo, firma_digital: f.firma,
           de_acuerdo: f.deAcuerdo, motivo_desacuerdo: f.motivo, sync_status: 'pending'
         })
       }
@@ -343,10 +343,12 @@ export default function PartidoVivo() {
   }
 
   // ================= PDF DE LA PWA =================
-  function descargarPDF() {
+    function descargarPDF() {
     try {
       const doc = new jsPDF()
       const p = partido
+      
+      // Limpiador para evitar símbolos raros (ñ, tildes)
       const sanitize = (s) => {
         if (!s) return '';
         return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ñ/g, 'n').trim();
@@ -444,6 +446,7 @@ export default function PartidoVivo() {
       let lineY = nextY + 6 + (splitText.length * 5) + 10
       const firmaY = lineY + 85
 
+      // AQUI ESTABA EL ERROR: Se usaba 'firmas' pero no estaba declarado correctamente
       const fArbitro = firmas.find(f => f.tipo_firmante === 'arbitro')
       const fCapLocal = firmas.find(f => f.tipo_firmante === 'local')
       const fCapVisitante = firmas.find(f => f.tipo_firmante === 'visitante')
@@ -457,6 +460,7 @@ export default function PartidoVivo() {
       const drawImageSafely = (base64, x, y, w, h) => {
         try { 
           if (base64) {
+            // Limpieza profunda del base64
             const cleanB64 = base64.replace(/^data:image\/(png|jpeg|jpg);base64,/, '').replace(/\s/g, '');
             doc.addImage(cleanB64, "PNG", x, y, w, h, undefined, 'FAST') 
           }
@@ -473,7 +477,8 @@ export default function PartidoVivo() {
 
       firmantes.forEach((item, index) => {
         const x = xPositions[index]
-        drawImageSafely(item.firma?.firma_base64, x, firmaY - 20, 30, 15)
+        // USAMOS firma_digital (como está en la BD)
+        drawImageSafely(item.firma?.firma_digital, x, firmaY - 20, 30, 15)
         doc.line(x, firmaY, x + 30, firmaY)
         doc.setFontSize(7); doc.setFont("helvetica", "bold")
         doc.text(item.nombre, x + 15, firmaY + 4, { align: 'center' })
