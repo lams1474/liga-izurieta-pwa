@@ -22,12 +22,11 @@ export async function sincronizarPartido(partidoId) {
     goles_local: golesLocal,
     goles_visitante: golesVisitante,
     observaciones: partido.observaciones || null,
-    hora: partido.hora || null // 'hora' SÍ existe en tu tabla
-           
+    hora: partido.hora || null 
   }).eq('id', partidoId)
 
   if (errPartido) {
-    alert("ERROR AL ACTUALIZAR PARTIDO: " + errPartido.message)
+    console.error("ERROR AL ACTUALIZAR PARTIDO:", errPartido.message)
     throw new Error('Error actualizando partido: ' + errPartido.message)
   }
 
@@ -50,36 +49,40 @@ export async function sincronizarPartido(partidoId) {
         const { error } = await supabase.from('goles').insert({
           partido_id: partidoId, 
           jugador_id: ev.jugador_id, 
-          minuto: ev.minuto, 
+          minuto: Number(ev.minuto) || 0, 
           tipo: 'normal'
         })
-        if (error) alert("ERROR AL GUARDAR GOL: " + error.message)
+        if (error) console.error("ERROR AL GUARDAR GOL:", error.message)
       }
     }
 
-    // Sincronizar tarjetas (Guardar en faltas_partido para el PDF y Admin, y en sanciones_jugador para multas)
-    console.log("3. Sincronizando tarjetas...")
+    // Sincronizar tarjetas y faltas
+    console.log("3. Sincronizando tarjetas y faltas...")
+    
+    // Limpiamos las tablas antes de insertar
     await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
     await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
     
+    // Procesamos los eventos (tarjetas)
     for (const ev of eventos) {
       if (ev.tipo === 'amarilla' || ev.tipo === 'roja') {
         
-        // A. Guardar en faltas_partido (Lo que lee el PDF del celular y el Admin)
+        // A. Guardar en faltas_partido
         const { error: errFalta } = await supabase.from('faltas_partido').insert({
           partido_id: partidoId,
           jugador_id: ev.jugador_id,
           equipo_id: ev.equipo_id,
           tipo: ev.tipo, // 'amarilla' o 'roja'
-          periodo: 1,
-          minuto: ev.minuto || 0
+          periodo: Number(ev.periodo) || 1,
+          minuto: Number(ev.minuto) || 0
+          // NO enviamos 'causa' porque no existe en la tabla de Supabase
         })
         
         if (errFalta) {
-          alert("❌ ERROR AL GUARDAR TARJETA EN FALTAS_PARTIDO:\n\n" + errFalta.message)
+          console.error("❌ ERROR AL GUARDAR TARJETA EN FALTAS_PARTIDO:", errFalta.message)
         }
 
-        // B. Guardar en sanciones_jugador (Para que salga en el módulo de Sanciones y Pagos)
+        // B. Guardar en sanciones_jugador
         const { error: errSancion } = await supabase.from('sanciones_jugador').insert({
           jugador_id: ev.jugador_id, 
           equipo_id: ev.equipo_id, 
@@ -93,23 +96,20 @@ export async function sincronizarPartido(partidoId) {
         })
         
         if (errSancion) {
-          console.error("Error insertando sanción:", errSancion)
-          alert("❌ ERROR AL GUARDAR SANCIÓN:\n\n" + errSancion.message)
+          console.error("❌ ERROR AL GUARDAR SANCIÓN:", errSancion.message)
         }
       }
     }
 
-    // Sincronizar faltas (Las faltas normales de futsal)
-    console.log("4. Sincronizando faltas...")
-    await supabase.from('faltas_partido').delete().eq('partido_id', partidoId).eq('tipo', 'falta')
+    // Procesamos las faltas personales (de la tabla local 'faltas')
     for (const f of faltas) {
       await supabase.from('faltas_partido').insert({
         partido_id: partidoId,
         jugador_id: f.jugador_id,
         equipo_id: f.equipo_id,
-        tipo: 'falta',
-        periodo: Number(f.periodo || 1),
-        minuto: f.minuto
+        tipo: 'personal', // El tipo correcto que acepta la BD
+        periodo: Number(f.periodo) || 1,
+        minuto: Number(f.minuto) || 0
       })
     }
 
@@ -120,7 +120,6 @@ export async function sincronizarPartido(partidoId) {
 
     if (actaExistente) {
       actaId = actaExistente.id
-      // Actualizamos las observaciones y la fecha de cierre del acta
       await supabase.from('actas').update({
         estado: 'cerrada',
         observaciones: partido.observaciones || null,
@@ -136,7 +135,7 @@ export async function sincronizarPartido(partidoId) {
       }).select().single()
       
       if (errActa) {
-        alert("ERROR AL CREAR ACTA: " + errActa.message)
+        console.error("ERROR AL CREAR ACTA:", errActa.message)
       } else {
         actaId = nuevaActa.id
       }
@@ -150,7 +149,7 @@ export async function sincronizarPartido(partidoId) {
       await supabase.from('firmas_acta').insert({
         acta_id: actaId,
         firmante_tipo: tipoValido,
-        firma_digital: f.firma_base64,
+        firma_digital: f.firma_digital // IMPORTANTE: Usar firma_digital, no firma_base64
       })
     }
 
