@@ -105,12 +105,13 @@ export async function sincronizarPartido(partidoId) {
       if (error) console.error("Error guardando falta:", error.message)
     }
 
-    // Sincronizar Planilla
+        // Sincronizar Planilla (Solo los que son titulares o suplentes del partido)
     console.log("4. Sincronizando planilla...")
     await supabase.from('planilla_partido').delete().eq('partido_id', partidoId)
 
+    // Filtramos para asegurarnos de que no suba más de 12 por equipo (o los que realmente jugaron)
+    // En Dexie, todos los inscritos tienen `es_titular` (true o false). Aquí no hay filtro de nómina.
     for (const p of planilla) {
-      // IMPORTANTE: No enviamos 'id', dejamos que Supabase genere el UUID
       const { error } = await supabase.from('planilla_partido').insert({
         partido_id: partidoId,
         equipo_id: p.equipo_id,
