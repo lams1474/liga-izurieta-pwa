@@ -108,10 +108,10 @@ export async function sincronizarPartido(partidoId) {
     }
 
     // Sincronizar Planilla
-    console.log("4. Sincronizando planilla...")
-    await supabase.from('planilla_partido').delete().eq('partido_id', partidoId)
-
-    for (const p of planilla) {
+        const jugadoresConvocados = planilla.filter(p => p.dorsal && p.dorsal > 0)
+    console.log("Jugadores a sincronizar:", jugadoresConvocados.length)
+    
+    for (const p of jugadoresConvocados) {
       // IMPORTANTE: No enviamos 'id', dejamos que Supabase genere el UUID
       const { error } = await supabase.from('planilla_partido').insert({
         partido_id: partidoId,
@@ -123,7 +123,7 @@ export async function sincronizarPartido(partidoId) {
       })
       if (error) console.error("Error guardando planilla:", error.message)
     }
-    console.log("✅ Planilla insertada:", planilla.length, "jugadores")
+    console.log("✅ Planilla insertada:", jugadoresConvocados.length, "jugadores")
 
     // Sincronizar firmas
     console.log("5. Sincronizando firmas...")
