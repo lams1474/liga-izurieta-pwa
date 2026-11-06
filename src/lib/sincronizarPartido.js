@@ -8,6 +8,7 @@ export async function sincronizarPartido(partidoId) {
   const eventos = await db.eventos.where('partido_id').equals(partidoId).toArray()
   const faltas = await db.faltas.where('partido_id').equals(partidoId).toArray()
   const firmas = await db.firmas.where('partido_id').equals(partidoId).toArray()
+  const planilla = await db.planilla.where('partido_id').equals(partidoId).toArray()
 
   if (!partido) throw new Error('Partido no encontrado en memoria local')
 
@@ -59,30 +60,23 @@ export async function sincronizarPartido(partidoId) {
     // Sincronizar tarjetas y faltas
     console.log("3. Sincronizando tarjetas y faltas...")
     
-    // Limpiamos las tablas antes de insertar
     await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
     await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
     
-    // Procesamos los eventos (tarjetas)
     for (const ev of eventos) {
       if (ev.tipo === 'amarilla' || ev.tipo === 'roja') {
         
-        // A. Guardar en faltas_partido
         const { error: errFalta } = await supabase.from('faltas_partido').insert({
           partido_id: partidoId,
           jugador_id: ev.jugador_id,
           equipo_id: ev.equipo_id,
-          tipo: ev.tipo, // 'amarilla' o 'roja'
+          tipo: ev.tipo,
           periodo: Number(ev.periodo) || 1,
           minuto: Number(ev.minuto) || 0
-          // NO enviamos 'causa' porque no existe en la tabla de Supabase
         })
         
-        if (errFalta) {
-          console.error("❌ ERROR AL GUARDAR TARJETA EN FALTAS_PARTIDO:", errFalta.message)
-        }
+        if (errFalta) console.error("❌ ERROR AL GUARDAR TARJETA EN FALTAS_PARTIDO:", errFalta.message)
 
-        // B. Guardar en sanciones_jugador
         const { error: errSancion } = await supabase.from('sanciones_jugador').insert({
           jugador_id: ev.jugador_id, 
           equipo_id: ev.equipo_id, 
@@ -95,23 +89,39 @@ export async function sincronizarPartido(partidoId) {
           activa: true
         })
         
-        if (errSancion) {
-          console.error("❌ ERROR AL GUARDAR SANCIÓN:", errSancion.message)
-        }
+        if (errSancion) console.error("❌ ERROR AL GUARDAR SANCIÓN:", errSancion.message)
       }
     }
 
-    // Procesamos las faltas personales (de la tabla local 'faltas')
     for (const f of faltas) {
-      await supabase.from('faltas_partido').insert({
+      const { error } = await supabase.from('faltas_partido').insert({
         partido_id: partidoId,
         jugador_id: f.jugador_id,
         equipo_id: f.equipo_id,
-        tipo: 'personal', // El tipo correcto que acepta la BD
+        tipo: 'personal',
         periodo: Number(f.periodo) || 1,
         minuto: Number(f.minuto) || 0
       })
+      if (error) console.error("Error guardando falta:", error.message)
     }
+
+    // Sincronizar Planilla
+    console.log("4. Sincronizando planilla...")
+    await supabase.from('planilla_partido').delete().eq('partido_id', partidoId)
+
+    for (const p of planilla) {
+      // IMPORTANTE: No enviamos 'id', dejamos que Supabase genere el UUID
+      const { error } = await supabase.from('planilla_partido').insert({
+        partido_id: partidoId,
+        equipo_id: p.equipo_id,
+        jugador_id: p.jugador_id,
+        dorsal: Number(p.dorsal) || 0,
+        es_titular: p.es_titular,
+        es_capitan: p.es_capitan
+      })
+      if (error) console.error("Error guardando planilla:", error.message)
+    }
+    console.log("✅ Planilla insertada:", planilla.length, "jugadores")
 
     // Sincronizar firmas
     console.log("5. Sincronizando firmas...")
@@ -146,11 +156,12 @@ export async function sincronizarPartido(partidoId) {
       if (tipoValido === 'local') tipoValido = 'capitan_local'
       if (tipoValido === 'visitante') tipoValido = 'capitan_visitante'
 
-      await supabase.from('firmas_acta').insert({
+      const { error } = await supabase.from('firmas_acta').insert({
         acta_id: actaId,
         firmante_tipo: tipoValido,
-        firma_digital: f.firma_digital // IMPORTANTE: Usar firma_digital, no firma_base64
+        firma_digital: f.firma_digital
       })
+      if (error) console.error("Error guardando firma:", error.message)
     }
 
     console.log("✅ Sincronización completada")
