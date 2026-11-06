@@ -16,7 +16,6 @@ export default function PartidoVivo() {
   const [equipoLocal, setEquipoLocal] = useState(null)
   const [equipoVisitante, setEquipoVisitante] = useState(null)
   const [rolUsuario, setRolUsuario] = useState(null)
-  
 
   const [jugadoresLocal, setJugadoresLocal] = useState([])
   const [jugadoresVisitante, setJugadoresVisitante] = useState([])
@@ -111,7 +110,6 @@ export default function PartidoVivo() {
 
         if (p.vocal_id === userId) setRolUsuario('vocal')
         else setRolUsuario('arbitro')
-        
 
         const local = await db.equipos.get(p.equipo_local_id)
         const visitante = await db.equipos.get(p.equipo_visitante_id)
@@ -130,7 +128,6 @@ export default function PartidoVivo() {
         setEventos(await db.eventos.where('partido_id').equals(id).toArray())
         setFaltas(await db.faltas.where('partido_id').equals(id).toArray())
         setCarnets(await db.carnets.toArray())
-        
         
         if (navigator.onLine) {
           const { data: deudas, error } = await supabase.rpc('obtener_deudas_tarjetas_partido', { p_partido_id: id })
@@ -153,6 +150,17 @@ export default function PartidoVivo() {
     const carnet = carnets.find(c => c.jugador_id === jugadorId)
     return carnet && carnet.valido === false
   }
+
+  // --- FILTRO PARA MOSTRAR SOLO JUGADORES CON DORSAL (LOS 12 SELECCIONADOS) ---
+  const jugadoresLocalFiltrados = jugadoresLocal.filter(j => {
+    const insc = planillaLocal.find(pl => pl.jugador_id === j.id)
+    return insc && insc.dorsal && insc.dorsal > 0
+  })
+  
+  const jugadoresVisitanteFiltrados = jugadoresVisitante.filter(j => {
+    const insc = planillaVisitante.find(pl => pl.jugador_id === j.id)
+    return insc && insc.dorsal && insc.dorsal > 0
+  })
 
   async function registrarEvento(tipo) {
     if (!jugadorSeleccionado || partido.jugado) return
@@ -397,7 +405,7 @@ export default function PartidoVivo() {
         {[equipoLocal, equipoVisitante].map((eq, idx) => {
           if (!eq) return null
           const esLocal = idx === 0
-          const jugadores = esLocal ? jugadoresLocal : jugadoresVisitante
+          const jugadores = esLocal ? jugadoresLocalFiltrados : jugadoresVisitanteFiltrados
           const planilla = esLocal ? planillaLocal : planillaVisitante
           const equipoId = esLocal ? partido.equipo_local_id : partido.equipo_visitante_id
           const faltasEq = faltas.filter(f => f.equipo_id === equipoId && f.periodo === periodoActual && f.tipo === 'personal').length

@@ -66,6 +66,7 @@ export async function sincronizarPartido(partidoId) {
     for (const ev of eventos) {
       if (ev.tipo === 'amarilla' || ev.tipo === 'roja') {
         
+        // A. Guardar en faltas_partido
         const { error: errFalta } = await supabase.from('faltas_partido').insert({
           partido_id: partidoId,
           jugador_id: ev.jugador_id,
@@ -77,6 +78,7 @@ export async function sincronizarPartido(partidoId) {
         
         if (errFalta) console.error("❌ ERROR AL GUARDAR TARJETA EN FALTAS_PARTIDO:", errFalta.message)
 
+        // B. Guardar en sanciones_jugador (Para que salga en Pagos)
         const { error: errSancion } = await supabase.from('sanciones_jugador').insert({
           jugador_id: ev.jugador_id, 
           equipo_id: ev.equipo_id, 
@@ -105,13 +107,12 @@ export async function sincronizarPartido(partidoId) {
       if (error) console.error("Error guardando falta:", error.message)
     }
 
-        // Sincronizar Planilla (Solo los que son titulares o suplentes del partido)
+    // Sincronizar Planilla
     console.log("4. Sincronizando planilla...")
     await supabase.from('planilla_partido').delete().eq('partido_id', partidoId)
 
-    // Filtramos para asegurarnos de que no suba más de 12 por equipo (o los que realmente jugaron)
-    // En Dexie, todos los inscritos tienen `es_titular` (true o false). Aquí no hay filtro de nómina.
     for (const p of planilla) {
+      // IMPORTANTE: No enviamos 'id', dejamos que Supabase genere el UUID
       const { error } = await supabase.from('planilla_partido').insert({
         partido_id: partidoId,
         equipo_id: p.equipo_id,
@@ -157,10 +158,13 @@ export async function sincronizarPartido(partidoId) {
       if (tipoValido === 'local') tipoValido = 'capitan_local'
       if (tipoValido === 'visitante') tipoValido = 'capitan_visitante'
 
+      // IMPORTANTE: En Dexie la firma se llama 'firma_base64' o 'firma'
+      const firmaData = f.firma_digital || f.firma_base64 || f.firma
+
       const { error } = await supabase.from('firmas_acta').insert({
         acta_id: actaId,
         firmante_tipo: tipoValido,
-        firma_digital: f.firma_digital
+        firma_digital: firmaData
       })
       if (error) console.error("Error guardando firma:", error.message)
     }
