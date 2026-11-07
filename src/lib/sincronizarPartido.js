@@ -3,7 +3,7 @@ import { db } from './db'
 
 export async function sincronizarPartido(partidoId) {
   console.log("🚀 Iniciando sincronización del partido:", partidoId)
-  
+
   const partido = await db.partidos.get(partidoId)
   const eventos = await db.eventos.where('partido_id').equals(partidoId).toArray()
   const faltas = await db.faltas.where('partido_id').equals(partidoId).toArray()
@@ -12,6 +12,7 @@ export async function sincronizarPartido(partidoId) {
 
   if (!partido) throw new Error('Partido no encontrado')
 
+  // Contar goles
   const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_local_id).length
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_visitante_id).length
 
@@ -34,7 +35,7 @@ export async function sincronizarPartido(partidoId) {
   } catch (e) { console.error(e) }
 
   try {
-    // 2. GOLES (Se buscan en 'eventos')
+    // 2. GOLES
     console.log("2. Sincronizando goles...")
     await supabase.from('goles').delete().eq('partido_id', partidoId)
     for (const ev of eventos) {
@@ -52,19 +53,19 @@ export async function sincronizarPartido(partidoId) {
     console.log("3. Sincronizando tarjetas y faltas...")
     await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
     await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
-    
+
     for (const f of faltas) {
       // A. Guardar en faltas_partido (Para el PDF)
       await supabase.from('faltas_partido').insert({
         partido_id: partidoId,
         jugador_id: f.jugador_id,
         equipo_id: f.equipo_id,
-        tipo: f.tipo, // 'amarilla', 'roja' o 'personal'
+        tipo: f.tipo,
         periodo: Number(f.periodo) || 1,
         minuto: Number(f.minuto) || 0
       })
 
-      // B. Si es tarjeta, generar sanción en sanciones_jugador
+      // B. Si es tarjeta, generar sanción
       if (f.tipo === 'amarilla' || f.tipo === 'roja') {
         const { error: errSancion } = await supabase.from('sanciones_jugador').insert({
           jugador_id: f.jugador_id, 
@@ -149,4 +150,14 @@ export async function sincronizarPartido(partidoId) {
 
   await db.partidos.update(partidoId, { jugado: true, sincronizado: true, goles_local: golesLocal, goles_visitante: golesVisitante })
   return { golesLocal, golesVisitante }
+}
+
+export function iniciarAutoSincronizacion() {
+  window.addEventListener('online', async () => {
+    const partidos = await db.partidos.toArray()
+    const pendientes = partidos.filter(p => p.jugado && !p.sincronizado)
+    for (const p of pendientes) {
+      try { await sincronizarPartido(p.id) } catch (error) { console.error(error) }
+    }
+  })
 }
