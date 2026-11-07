@@ -346,6 +346,7 @@ export default function PartidoVivo() {
   async function ejecutarFinalizacion(firmasFinales, textoNovedades) {
     setFinalizando(true)
     try {
+    // 1. Guardar firmas en Dexie
       await db.firmas.where('partido_id').equals(id).delete()
       for (const f of firmasFinales) {
         await db.firmas.add({
@@ -354,11 +355,20 @@ export default function PartidoVivo() {
         })
       }
 
+      // 2. Marcar partido como jugado
       await db.partidos.update(id, { jugado: true, observaciones: textoNovedades, sync_status: 'pending' })
       setPartido(prev => ({ ...prev, jugado: true, observaciones: textoNovedades }))
 
+      // 3. Sincronizar con Supabase y recargar deudas
       if (navigator.onLine) {
-        try { await sincronizarPartido(id) } catch (e) { console.error("Error sync:", e) }
+        try { 
+          await sincronizarPartido(id) 
+          // IMPORTANTE: Recargar las deudas para que aparezca el botón de cobro
+          const { data: deudas } = await supabase.rpc('obtener_deudas_tarjetas_partido', { p_partido_id: id })
+          setDeudasTarjetas(deudas || [])
+        } catch (e) { 
+          console.error("Error sync:", e) 
+        }
       }
       toast.success('Acta finalizada')
     } catch {
