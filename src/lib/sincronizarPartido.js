@@ -107,23 +107,38 @@ export async function sincronizarPartido(partidoId) {
       if (error) console.error("Error guardando falta:", error.message)
     }
 
-    // Sincronizar Planilla
-        const jugadoresConvocados = planilla.filter(p => p.dorsal && p.dorsal > 0)
-    console.log("Jugadores a sincronizar:", jugadoresConvocados.length)
+       // Sincronizar Planilla (Solo los que el vocal seleccionó en el partido)
+    console.log("4. Sincronizando planilla...")
+    await supabase.from('planilla_partido').delete().eq('partido_id', partidoId)
+
+    // Filtramos para evitar duplicados (un jugador por equipo)
+    const jugadoresUnicos = []
+    const vistos = new Set()
     
-    for (const p of jugadoresConvocados) {
-      // IMPORTANTE: No enviamos 'id', dejamos que Supabase genere el UUID
-      const { error } = await supabase.from('planilla_partido').insert({
+    for (const p of planilla) {
+      const key = `${p.partido_id}-${p.jugador_id}`
+      if (!vistos.has(key)) {
+        vistos.add(key)
+        jugadoresUnicos.push(p)
+      }
+    }
+
+    console.log(`Enviando ${jugadoresUnicos.length} jugadores convocados`)
+
+    for (const p of jugadoresUnicos) {
+      // Usamos upsert para evitar el error 400 si el jugador ya existe
+      const { error } = await supabase.from('planilla_partido').upsert({
         partido_id: partidoId,
         equipo_id: p.equipo_id,
         jugador_id: p.jugador_id,
         dorsal: Number(p.dorsal) || 0,
-        es_titular: p.es_titular,
-        es_capitan: p.es_capitan
-      })
+        es_titular: p.es_titular || false,
+        es_capitan: p.es_capitan || false
+      }, { onConflict: 'partido_id, jugador_id' })
+
       if (error) console.error("Error guardando planilla:", error.message)
     }
-    console.log("✅ Planilla insertada:", jugadoresConvocados.length, "jugadores")
+    console.log("✅ Planilla insertada:", jugadoresUnicos.length, "jugadores")
 
     // Sincronizar firmas
     console.log("5. Sincronizando firmas...")
