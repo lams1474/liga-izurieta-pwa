@@ -62,7 +62,8 @@ export async function sincronizarPartido(partidoId) {
         equipo_id: f.equipo_id,
         tipo: f.tipo,
         periodo: Number(f.periodo) || 1,
-        minuto: Number(f.minuto) || 0
+        minuto: Number(f.minuto) || 0,
+        causa: f.causa || 'No especificada' // <--- AGREGAR ESTO
       })
 
       // B. Si es tarjeta, generar sanción
