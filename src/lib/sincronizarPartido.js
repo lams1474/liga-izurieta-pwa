@@ -10,14 +10,13 @@ export async function sincronizarPartido(partidoId) {
   const firmas = await db.firmas.where('partido_id').equals(partidoId).toArray()
   const planilla = await db.planilla.where('partido_id').equals(partidoId).toArray()
 
-  if (!partido) throw new Error('Partido no encontrado en memoria local')
+  if (!partido) throw new Error('Partido no encontrado')
 
-  // Contar goles
   const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_local_id).length
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_visitante_id).length
 
-  // 1. ACTUALIZAR EL PARTIDO EN SUPABASE
-  console.log("1. Actualizando marcador y fecha...")
+  // 1. PARTIDO
+  console.log("1. Actualizando partido...")
   const { error: errPartido } = await supabase.from('partidos').update({
     jugado: true,
     goles_local: golesLocal,
@@ -25,108 +24,79 @@ export async function sincronizarPartido(partidoId) {
     observaciones: partido.observaciones || null,
     hora: partido.hora || null 
   }).eq('id', partidoId)
+  if (errPartido) throw new Error('Error actualizando partido: ' + errPartido.message)
 
-  if (errPartido) {
-    console.error("ERROR AL ACTUALIZAR PARTIDO:", errPartido.message)
-    throw new Error('Error actualizando partido: ' + errPartido.message)
-  }
-
-  // Obtener el etapa_id del partido (para las sanciones)
+  // Obtener etapa_id
   let etapaId = null
   try {
     const { data: pData } = await supabase.from('partidos').select('fecha_id, fechas(etapa_id)').eq('id', partidoId).single()
     etapaId = pData?.fechas?.etapa_id || null
-  } catch (e) {
-    console.error("No se pudo obtener el etapa_id", e)
-  }
+  } catch (e) { console.error(e) }
 
-  // 2. RESTO DE LA SINCRONIZACIÓN
   try {
-    // Sincronizar goles
+    // 2. GOLES (Se buscan en 'eventos')
     console.log("2. Sincronizando goles...")
     await supabase.from('goles').delete().eq('partido_id', partidoId)
     for (const ev of eventos) {
       if (ev.tipo === 'gol') {
-        const { error } = await supabase.from('goles').insert({
+        await supabase.from('goles').insert({
           partido_id: partidoId, 
           jugador_id: ev.jugador_id, 
           minuto: Number(ev.minuto) || 0, 
           tipo: 'normal'
         })
-        if (error) console.error("ERROR AL GUARDAR GOL:", error.message)
       }
     }
 
-    // Sincronizar tarjetas y faltas
+    // 3. TARJETAS Y FALTAS (Se buscan en 'faltas')
     console.log("3. Sincronizando tarjetas y faltas...")
-    
     await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
     await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
     
-    for (const ev of eventos) {
-      if (ev.tipo === 'amarilla' || ev.tipo === 'roja') {
-        
-        // A. Guardar en faltas_partido
-        const { error: errFalta } = await supabase.from('faltas_partido').insert({
-          partido_id: partidoId,
-          jugador_id: ev.jugador_id,
-          equipo_id: ev.equipo_id,
-          tipo: ev.tipo,
-          periodo: Number(ev.periodo) || 1,
-          minuto: Number(ev.minuto) || 0
-        })
-        
-        if (errFalta) console.error("❌ ERROR AL GUARDAR TARJETA EN FALTAS_PARTIDO:", errFalta.message)
-
-        // B. Guardar en sanciones_jugador (Para que salga en Pagos)
-        const { error: errSancion } = await supabase.from('sanciones_jugador').insert({
-          jugador_id: ev.jugador_id, 
-          equipo_id: ev.equipo_id, 
-          partido_id: partidoId,
-          etapa_id: etapaId, 
-          tipo: ev.tipo, 
-          motivo: ev.causa || 'No especificada',
-          fechas_sancion: ev.tipo === 'roja' ? 1 : 0,
-          fechas_cumplidas: 0, 
-          activa: true
-        })
-        
-        if (errSancion) console.error("❌ ERROR AL GUARDAR SANCIÓN:", errSancion.message)
-      }
-    }
-
     for (const f of faltas) {
-      const { error } = await supabase.from('faltas_partido').insert({
+      // A. Guardar en faltas_partido (Para el PDF)
+      await supabase.from('faltas_partido').insert({
         partido_id: partidoId,
         jugador_id: f.jugador_id,
         equipo_id: f.equipo_id,
-        tipo: 'personal',
+        tipo: f.tipo, // 'amarilla', 'roja' o 'personal'
         periodo: Number(f.periodo) || 1,
         minuto: Number(f.minuto) || 0
       })
-      if (error) console.error("Error guardando falta:", error.message)
+
+      // B. Si es tarjeta, generar sanción en sanciones_jugador
+      if (f.tipo === 'amarilla' || f.tipo === 'roja') {
+        const { error: errSancion } = await supabase.from('sanciones_jugador').insert({
+          jugador_id: f.jugador_id, 
+          equipo_id: f.equipo_id, 
+          partido_id: partidoId,
+          etapa_id: etapaId, 
+          tipo: f.tipo, 
+          motivo: f.causa || 'No especificada',
+          fechas_sancion: f.tipo === 'roja' ? 1 : 0,
+          fechas_cumplidas: 0, 
+          activa: true
+        })
+        if (errSancion) console.error("❌ Error al guardar sanción:", errSancion.message)
+      }
     }
 
-       // Sincronizar Planilla (Solo los que el vocal seleccionó en el partido)
+    // 4. PLANILLA
     console.log("4. Sincronizando planilla...")
     await supabase.from('planilla_partido').delete().eq('partido_id', partidoId)
 
-    // Filtramos para evitar duplicados (un jugador por equipo)
     const jugadoresUnicos = []
     const vistos = new Set()
-    
     for (const p of planilla) {
-      const key = `${p.partido_id}-${p.jugador_id}`
-      if (!vistos.has(key)) {
-        vistos.add(key)
+      if (!vistos.has(p.jugador_id)) {
+        vistos.add(p.jugador_id)
         jugadoresUnicos.push(p)
       }
     }
 
-    console.log(`Enviando ${jugadoresUnicos.length} jugadores convocados`)
+    console.log(`Enviando ${jugadoresUnicos.length} jugadores`)
 
     for (const p of jugadoresUnicos) {
-      // Usamos upsert para evitar el error 400 si el jugador ya existe
       const { error } = await supabase.from('planilla_partido').upsert({
         partido_id: partidoId,
         equipo_id: p.equipo_id,
@@ -135,12 +105,10 @@ export async function sincronizarPartido(partidoId) {
         es_titular: p.es_titular || false,
         es_capitan: p.es_capitan || false
       }, { onConflict: 'partido_id, jugador_id' })
-
       if (error) console.error("Error guardando planilla:", error.message)
     }
-    console.log("✅ Planilla insertada:", jugadoresUnicos.length, "jugadores")
 
-    // Sincronizar firmas
+    // 5. FIRMAS
     console.log("5. Sincronizando firmas...")
     let actaId;
     const { data: actaExistente } = await supabase.from('actas').select('id').eq('partido_id', partidoId).maybeSingle()
@@ -154,52 +122,31 @@ export async function sincronizarPartido(partidoId) {
       }).eq('id', actaId)
       await supabase.from('firmas_acta').delete().eq('acta_id', actaId)
     } else {
-      const { data: nuevaActa, error: errActa } = await supabase.from('actas').insert({
+      const { data: nuevaActa } = await supabase.from('actas').insert({
         partido_id: partidoId,
         estado: 'cerrada',
         observaciones: partido.observaciones || null,
         cerrada_en: new Date().toISOString()
       }).select().single()
-      
-      if (errActa) {
-        console.error("ERROR AL CREAR ACTA:", errActa.message)
-      } else {
-        actaId = nuevaActa.id
-      }
+      if (nuevaActa) actaId = nuevaActa.id
     }
 
-    for (const f of firmas) {
-      let tipoValido = f.tipo_firmante
-      if (tipoValido === 'local') tipoValido = 'capitan_local'
-      if (tipoValido === 'visitante') tipoValido = 'capitan_visitante'
-
-      // IMPORTANTE: En Dexie la firma se llama 'firma_base64' o 'firma'
-      const firmaData = f.firma_digital || f.firma_base64 || f.firma
-
-      const { error } = await supabase.from('firmas_acta').insert({
-        acta_id: actaId,
-        firmante_tipo: tipoValido,
-        firma_digital: firmaData
-      })
-      if (error) console.error("Error guardando firma:", error.message)
+    if (actaId) {
+      for (const f of firmas) {
+        let tipoValido = f.tipo_firmante === 'local' ? 'capitan_local' : f.tipo_firmante === 'visitante' ? 'capitan_visitante' : f.tipo_firmante
+        await supabase.from('firmas_acta').insert({
+          acta_id: actaId,
+          firmante_tipo: tipoValido,
+          firma_digital: f.firma_digital || f.firma_base64 || f.firma
+        })
+      }
     }
 
     console.log("✅ Sincronización completada")
   } catch (error) {
-    console.error("⚠️ Error en sincronización secundaria:", error)
-    alert("ERROR GENERAL: " + error.message)
+    console.error("⚠️ Error en sincronización:", error)
   }
 
   await db.partidos.update(partidoId, { jugado: true, sincronizado: true, goles_local: golesLocal, goles_visitante: golesVisitante })
   return { golesLocal, golesVisitante }
-}
-
-export function iniciarAutoSincronizacion() {
-  window.addEventListener('online', async () => {
-    const partidos = await db.partidos.toArray()
-    const pendientes = partidos.filter(p => p.jugado && !p.sincronizado)
-    for (const p of pendientes) {
-      try { await sincronizarPartido(p.id) } catch (error) { console.error(error) }
-    }
-  })
 }
