@@ -40,15 +40,17 @@ export async function sincronizarPartido(partidoId) {
       }
     }
 
-    // 3. LIMPIAR TARJETAS Y SANCIONES ANTES DE INSERTAR
+        // 3. LIMPIAR TARJETAS Y SANCIONES ANTES DE INSERTAR
     console.log("3. Sincronizando tarjetas y faltas...")
+    
+    // ⚠️ IMPORTANTE: Borramos TODO antes de insertar
     await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
+    await supabase.from('deudas_jugador').delete().eq('partido_id', partidoId) // Borrar deudas primero
     await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
     await supabase.from('sanciones').delete().eq('partido_id', partidoId)
 
-    // Procesamos SOLO las faltas (donde están las tarjetas con su causa)
+    // Procesamos SOLO las faltas (el trigger hará el resto)
     for (const f of faltas) {
-      // A. Guardar en faltas_partido CON SU CAUSA (para que el trigger la lea)
       await supabase.from('faltas_partido').insert({
         partido_id: partidoId,
         jugador_id: f.jugador_id,
@@ -56,7 +58,7 @@ export async function sincronizarPartido(partidoId) {
         tipo: f.tipo,
         periodo: Number(f.periodo) || 1,
         minuto: Number(f.minuto) || 0,
-        causa: f.causa || 'No especificada' // <--- ESTO ARREGLA EL ACTA
+        causa: f.causa || 'No especificada'
       })
     }
 
