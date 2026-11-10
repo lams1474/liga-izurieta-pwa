@@ -3,7 +3,7 @@ import { db } from './db'
 
 export async function sincronizarPartido(partidoId) {
   console.log("🚀 Iniciando sincronización del partido:", partidoId)
-
+  
   const partido = await db.partidos.get(partidoId)
   const eventos = await db.eventos.where('partido_id').equals(partidoId).toArray()
   const faltas = await db.faltas.where('partido_id').equals(partidoId).toArray()
@@ -12,27 +12,18 @@ export async function sincronizarPartido(partidoId) {
 
   if (!partido) throw new Error('Partido no encontrado')
 
-  // Contar goles
   const golesLocal = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_local_id).length
   const golesVisitante = eventos.filter(e => e.tipo === 'gol' && e.equipo_id === partido.equipo_visitante_id).length
 
   // 1. PARTIDO
   console.log("1. Actualizando partido...")
-  const { error: errPartido } = await supabase.from('partidos').update({
+  await supabase.from('partidos').update({
     jugado: true,
     goles_local: golesLocal,
     goles_visitante: golesVisitante,
     observaciones: partido.observaciones || null,
     hora: partido.hora || null 
   }).eq('id', partidoId)
-  if (errPartido) throw new Error('Error actualizando partido: ' + errPartido.message)
-
-  // Obtener etapa_id
-  let etapaId = null
-  try {
-    const { data: pData } = await supabase.from('partidos').select('fecha_id, fechas(etapa_id)').eq('id', partidoId).single()
-    etapaId = pData?.fechas?.etapa_id || null
-  } catch (e) { console.error(e) }
 
   try {
     // 2. GOLES
@@ -49,13 +40,15 @@ export async function sincronizarPartido(partidoId) {
       }
     }
 
-    // 3. TARJETAS Y FALTAS (Se buscan en 'faltas')
+    // 3. LIMPIAR TARJETAS Y SANCIONES ANTES DE INSERTAR
     console.log("3. Sincronizando tarjetas y faltas...")
     await supabase.from('faltas_partido').delete().eq('partido_id', partidoId)
     await supabase.from('sanciones_jugador').delete().eq('partido_id', partidoId)
+    await supabase.from('sanciones').delete().eq('partido_id', partidoId)
 
+    // Procesamos SOLO las faltas (donde están las tarjetas con su causa)
     for (const f of faltas) {
-      // A. Guardar en faltas_partido (Para el PDF)
+      // A. Guardar en faltas_partido CON SU CAUSA (para que el trigger la lea)
       await supabase.from('faltas_partido').insert({
         partido_id: partidoId,
         jugador_id: f.jugador_id,
@@ -63,24 +56,8 @@ export async function sincronizarPartido(partidoId) {
         tipo: f.tipo,
         periodo: Number(f.periodo) || 1,
         minuto: Number(f.minuto) || 0,
-        causa: f.causa || 'No especificada' // <--- AGREGAR ESTO
+        causa: f.causa || 'No especificada' // <--- ESTO ARREGLA EL ACTA
       })
-
-      // B. Si es tarjeta, generar sanción
-      if (f.tipo === 'amarilla' || f.tipo === 'roja') {
-        const { error: errSancion } = await supabase.from('sanciones_jugador').insert({
-          jugador_id: f.jugador_id, 
-          equipo_id: f.equipo_id, 
-          partido_id: partidoId,
-          etapa_id: etapaId, 
-          tipo: f.tipo, 
-          motivo: f.causa || 'No especificada',
-          fechas_sancion: f.tipo === 'roja' ? 1 : 0,
-          fechas_cumplidas: 0, 
-          activa: true
-        })
-        if (errSancion) console.error("❌ Error al guardar sanción:", errSancion.message)
-      }
     }
 
     // 4. PLANILLA
@@ -99,7 +76,7 @@ export async function sincronizarPartido(partidoId) {
     console.log(`Enviando ${jugadoresUnicos.length} jugadores`)
 
     for (const p of jugadoresUnicos) {
-      const { error } = await supabase.from('planilla_partido').upsert({
+      await supabase.from('planilla_partido').upsert({
         partido_id: partidoId,
         equipo_id: p.equipo_id,
         jugador_id: p.jugador_id,
@@ -107,7 +84,6 @@ export async function sincronizarPartido(partidoId) {
         es_titular: p.es_titular || false,
         es_capitan: p.es_capitan || false
       }, { onConflict: 'partido_id, jugador_id' })
-      if (error) console.error("Error guardando planilla:", error.message)
     }
 
     // 5. FIRMAS
@@ -151,14 +127,4 @@ export async function sincronizarPartido(partidoId) {
 
   await db.partidos.update(partidoId, { jugado: true, sincronizado: true, goles_local: golesLocal, goles_visitante: golesVisitante })
   return { golesLocal, golesVisitante }
-}
-
-export function iniciarAutoSincronizacion() {
-  window.addEventListener('online', async () => {
-    const partidos = await db.partidos.toArray()
-    const pendientes = partidos.filter(p => p.jugado && !p.sincronizado)
-    for (const p of pendientes) {
-      try { await sincronizarPartido(p.id) } catch (error) { console.error(error) }
-    }
-  })
 }
