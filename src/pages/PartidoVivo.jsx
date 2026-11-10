@@ -256,10 +256,7 @@ export default function PartidoVivo() {
       } else {
         setPlanillaVisitante(prev => prev.map(p => p.jugador_id === modalDorsal.jugadorId ? { ...p, dorsal: num } : p))
       }
-      if (navigator.onLine) {
-        await supabase.from('planilla_partido').update({ dorsal: num }).eq('id', insc.id)
-        await db.planilla.update(insc.id, { sync_status: 'synced' })
-      }
+      
       setModalDorsal(null); toast.success('Dorsal actualizado')
     } catch {
       toast.error('Error al guardar dorsal')
@@ -278,9 +275,7 @@ export default function PartidoVivo() {
     } else {
       setPlanillaVisitante(prev => prev.map(p => p.id === insc.id ? { ...p, es_titular: nuevoEstado } : p))
     }
-    if (navigator.onLine) {
-      await supabase.from('planilla_partido').update({ es_titular: nuevoEstado }).eq('id', insc.id)
-    }
+    
   }
 
   async function marcarCapitan(jugadorId, equipoId) {
