@@ -79,7 +79,7 @@ export default function FirmaModal({ isOpen, onClose, onSave, tipoFirmante, titu
                   <textarea
                     value={motivo}
                     onChange={(e) => setMotivo(e.target.value)}
-                    className="w-full mt-1 px-3 py-2 border border-red-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 text-sm"
+                    className="w-full mt-1 px-3 py-2 border border-red-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 text-sm text-gray-900" // <--- AGREGAR text-gray-900
                     rows="2"
                     placeholder="Escriba el motivo aquí..."
                   />
@@ -94,7 +94,7 @@ export default function FirmaModal({ isOpen, onClose, onSave, tipoFirmante, titu
               <textarea
                 value={novedades}
                 onChange={(e) => setNovedades(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-liga-azul text-sm"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-liga-azul text-sm text-gray-900"
                 rows="3"
                 placeholder="Ej: Suspendido por lluvia, lesión grave, etc. (Opcional)"
               />
