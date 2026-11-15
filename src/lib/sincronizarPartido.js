@@ -139,3 +139,13 @@ export async function sincronizarPartido(partidoId) {
   await db.partidos.update(partidoId, { jugado: true, sincronizado: true, goles_local: golesLocal, goles_visitante: golesVisitante })
   return { golesLocal, golesVisitante }
 }
+
+export function iniciarAutoSincronizacion() {
+  window.addEventListener('online', async () => {
+    const partidos = await db.partidos.toArray()
+    const pendientes = partidos.filter(p => p.jugado && !p.sincronizado)
+    for (const p of pendientes) {
+      try { await sincronizarPartido(p.id) } catch (error) { console.error(error) }
+    }
+  })
+}
