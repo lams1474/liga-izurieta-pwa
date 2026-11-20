@@ -151,16 +151,14 @@ export default function PartidoVivo() {
     return carnet && carnet.valido === false
   }
 
-  // --- FILTRO PARA MOSTRAR SOLO JUGADORES CON DORSAL (LOS 12 SELECCIONADOS) ---
-  const jugadoresLocalFiltrados = jugadoresLocal.filter(j => {
-    const insc = planillaLocal.find(pl => pl.jugador_id === j.id)
-    return insc && insc.dorsal && insc.dorsal > 0
-  })
+    // Mostrar TODOS los jugadores que están en la planilla (sin filtrar por dorsal)
+  const jugadoresLocalFiltrados = jugadoresLocal.filter(j => 
+    planillaLocal.some(pl => pl.jugador_id === j.id)
+  )
   
-  const jugadoresVisitanteFiltrados = jugadoresVisitante.filter(j => {
-    const insc = planillaVisitante.find(pl => pl.jugador_id === j.id)
-    return insc && insc.dorsal && insc.dorsal > 0
-  })
+  const jugadoresVisitanteFiltrados = jugadoresVisitante.filter(j => 
+    planillaVisitante.some(pl => pl.jugador_id === j.id)
+  )
 
   async function registrarEvento(tipo) {
     if (!jugadorSeleccionado || partido.jugado) return
