@@ -29,7 +29,7 @@ export default function PartidoVivo() {
   const [jugadorSeleccionado, setJugadorSeleccionado] = useState(null)
   const [modalTarjeta, setModalTarjeta] = useState(null)
   const [causaTarjeta, setCausaTarjeta] = useState('')
-  
+
   const [finalizando, setFinalizando] = useState(false)
   const [pasoFirma, setPasoFirma] = useState(null)
   const [firmasTemporales, setFirmasTemporales] = useState([])
@@ -108,6 +108,39 @@ export default function PartidoVivo() {
           arbitro_nombre: pData?.arbitro ? `${pData.arbitro.nombres} ${pData.arbitro.apellidos}` : null
         }))
 
+        // 1. Cargar la planilla existente (los que ya tienen dorsal guardado)
+        const plan = await db.planilla.where('partido_id').equals(id).toArray()
+        const planLoc = plan.filter(pl => pl.equipo_id === p.equipo_local_id)
+        const planVis = plan.filter(pl => pl.equipo_id === p.equipo_visitante_id)
+        setPlanillaLocal(planLoc)
+        setPlanillaVisitante(planVis)
+
+        // 2. Cargar TODOS los jugadores del club desde la vista de carnets
+        const { data: jugadoresLoc } = await supabase
+          .from('vista_carnet_jugador')
+          .select('*')
+          .eq('equipo_id', p.equipo_local_id)
+          .order('apellidos', { ascending: true })
+
+        const { data: jugadoresVis } = await supabase
+          .from('vista_carnet_jugador')
+          .select('*')
+          .eq('equipo_id', p.equipo_visitante_id)
+          .order('apellidos', { ascending: true })
+
+        // 3. Mapear los datos al formato que espera la PWA
+        const mapearJugador = (j) => ({
+          id: j.jugador_id,
+          nombres: j.nombres,
+          apellidos: j.apellidos,
+          cedula: j.cedula,
+          foto_url: j.foto_url,
+          equipo_id: j.equipo_id
+        })
+
+        setJugadoresLocal((jugadoresLoc || []).map(mapearJugador))
+        setJugadoresVisitante((jugadoresVis || []).map(mapearJugador))
+
         if (p.vocal_id === userId) setRolUsuario('vocal')
         else setRolUsuario('arbitro')
 
@@ -116,19 +149,13 @@ export default function PartidoVivo() {
         setEquipoLocal(local)
         setEquipoVisitante(visitante)
 
-        const plan = await db.planilla.where('partido_id').equals(id).toArray()
-        const planLoc = plan.filter(pl => pl.equipo_id === p.equipo_local_id)
-        const planVis = plan.filter(pl => pl.equipo_id === p.equipo_visitante_id)
-        setPlanillaLocal(planLoc)
-        setPlanillaVisitante(planVis)
-
-        setJugadoresLocal(await db.jugadores.bulkGet(planLoc.map(pl => pl.jugador_id)).then(j => j.filter(Boolean)))
-        setJugadoresVisitante(await db.jugadores.bulkGet(planVis.map(pl => pl.jugador_id)).then(j => j.filter(Boolean)))
+        // ✅ Nota: se eliminó el bloque duplicado que volvía a declarar plan/planLoc/planVis
+        // y que sobrescribía jugadoresLocal/Visitante con bulkGet.
 
         setEventos(await db.eventos.where('partido_id').equals(id).toArray())
         setFaltas(await db.faltas.where('partido_id').equals(id).toArray())
         setCarnets(await db.carnets.toArray())
-        
+
         if (navigator.onLine) {
           const { data: deudas, error } = await supabase.rpc('obtener_deudas_tarjetas_partido', { p_partido_id: id })
           if (error) console.error("Error deudas:", error)
@@ -151,12 +178,12 @@ export default function PartidoVivo() {
     return carnet && carnet.valido === false
   }
 
-    // Mostrar TODOS los jugadores que están en la planilla (sin filtrar por dorsal)
-  const jugadoresLocalFiltrados = jugadoresLocal.filter(j => 
+  // Mostrar TODOS los jugadores que están en la planilla (sin filtrar por dorsal)
+  const jugadoresLocalFiltrados = jugadoresLocal.filter(j =>
     planillaLocal.some(pl => pl.jugador_id === j.id)
   )
-  
-  const jugadoresVisitanteFiltrados = jugadoresVisitante.filter(j => 
+
+  const jugadoresVisitanteFiltrados = jugadoresVisitante.filter(j =>
     planillaVisitante.some(pl => pl.jugador_id === j.id)
   )
 
@@ -193,7 +220,7 @@ export default function PartidoVivo() {
         minuto: Math.floor((22 * 60 - tiempoRestante) / 60) + (periodoActual === 1 ? 0 : 22),
         periodo: periodoActual, sync_status: 'pending'
       })
-      
+
       const nuevasFaltas = await db.faltas.where('partido_id').equals(id).toArray()
       setFaltas(nuevasFaltas)
       setJugadorSeleccionado(null)
@@ -254,7 +281,7 @@ export default function PartidoVivo() {
       } else {
         setPlanillaVisitante(prev => prev.map(p => p.jugador_id === modalDorsal.jugadorId ? { ...p, dorsal: num } : p))
       }
-      
+
       setModalDorsal(null); toast.success('Dorsal actualizado')
     } catch {
       toast.error('Error al guardar dorsal')
@@ -273,7 +300,6 @@ export default function PartidoVivo() {
     } else {
       setPlanillaVisitante(prev => prev.map(p => p.id === insc.id ? { ...p, es_titular: nuevoEstado } : p))
     }
-    
   }
 
   async function marcarCapitan(jugadorId, equipoId) {
@@ -339,7 +365,7 @@ export default function PartidoVivo() {
   async function ejecutarFinalizacion(firmasFinales, textoNovedades) {
     setFinalizando(true)
     try {
-    // 1. Guardar firmas en Dexie
+      // 1. Guardar firmas en Dexie
       await db.firmas.where('partido_id').equals(id).delete()
       for (const f of firmasFinales) {
         await db.firmas.add({
@@ -354,13 +380,13 @@ export default function PartidoVivo() {
 
       // 3. Sincronizar con Supabase y recargar deudas
       if (navigator.onLine) {
-        try { 
-          await sincronizarPartido(id) 
+        try {
+          await sincronizarPartido(id)
           // IMPORTANTE: Recargar las deudas para que aparezca el botón de cobro
           const { data: deudas } = await supabase.rpc('obtener_deudas_tarjetas_partido', { p_partido_id: id })
           setDeudasTarjetas(deudas || [])
-        } catch (e) { 
-          console.error("Error sync:", e) 
+        } catch (e) {
+          console.error("Error sync:", e)
         }
       }
       toast.success('Acta finalizada')
@@ -384,10 +410,10 @@ export default function PartidoVivo() {
       </header>
 
       <main className="p-4 max-w-2xl mx-auto space-y-4">
-        
+
         <div className="bg-gray-800 rounded-2xl shadow-2xl p-6 border border-blue-500/30 text-center relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-liga-amarillo"></div>
-          
+
           <div className="flex justify-center items-center gap-4 mb-4">
             <div className="text-4xl font-black text-white">{golesLocal}</div>
             <div className="text-2xl font-bold text-gray-500">-</div>
@@ -395,13 +421,13 @@ export default function PartidoVivo() {
           </div>
 
           <div className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-liga-amarillo mb-2">
-            {Math.floor(tiempoRestante/60)}:{(tiempoRestante%60).toString().padStart(2,'0')}
+            {Math.floor(tiempoRestante / 60)}:{(tiempoRestante % 60).toString().padStart(2, '0')}
           </div>
           <p className="text-sm text-gray-400 font-semibold mb-4">Periodo {periodoActual}</p>
           <div className="flex justify-center gap-3">
-             <button onClick={() => setRelojCorriendo(!relojCorriendo)} className={`p-3 rounded-full text-white shadow-lg transition-all ${relojCorriendo ? 'bg-red-500 hover:bg-red-600 shadow-red-500/50' : 'bg-green-500 hover:bg-green-600 shadow-green-500/50'}`}>{relojCorriendo ? <Pause size={24}/> : <Play size={24}/>}</button>
-             <button onClick={() => { setRelojCorriendo(false); setTiempoRestante(22*60); setPeriodoActual(1) }} className="p-3 rounded-full bg-gray-700 text-white hover:bg-gray-600 transition-all"><RotateCcw size={24}/></button>
-             {periodoActual === 1 && <button onClick={() => { setRelojCorriendo(false); setTiempoRestante(22*60); setPeriodoActual(2) }} className="text-xs bg-liga-amarillo text-black font-bold px-4 py-2 rounded-lg shadow-lg hover:bg-yellow-400 transition-colors">Iniciar 2do Tiempo</button>}
+            <button onClick={() => setRelojCorriendo(!relojCorriendo)} className={`p-3 rounded-full text-white shadow-lg transition-all ${relojCorriendo ? 'bg-red-500 hover:bg-red-600 shadow-red-500/50' : 'bg-green-500 hover:bg-green-600 shadow-green-500/50'}`}>{relojCorriendo ? <Pause size={24} /> : <Play size={24} />}</button>
+            <button onClick={() => { setRelojCorriendo(false); setTiempoRestante(22 * 60); setPeriodoActual(1) }} className="p-3 rounded-full bg-gray-700 text-white hover:bg-gray-600 transition-all"><RotateCcw size={24} /></button>
+            {periodoActual === 1 && <button onClick={() => { setRelojCorriendo(false); setTiempoRestante(22 * 60); setPeriodoActual(2) }} className="text-xs bg-liga-amarillo text-black font-bold px-4 py-2 rounded-lg shadow-lg hover:bg-yellow-400 transition-colors">Iniciar 2do Tiempo</button>}
           </div>
         </div>
 
@@ -428,10 +454,10 @@ export default function PartidoVivo() {
                   const rojasJug = faltas.filter(f => f.jugador_id === j.id && f.tipo === 'roja').length
                   const puedeEditar = rolUsuario === 'vocal' && !partido.jugado
                   const bloqueado = estaBloqueado(j.id)
-                  
+
                   return (
                     <div key={j.id} className={`flex items-center gap-2 p-3 transition-colors ${bloqueado ? 'opacity-50 bg-gray-900/50' : 'hover:bg-gray-750'}`}>
-                      
+
                       <button
                         onClick={() => puedeEditar && !bloqueado && abrirModalDorsal(j.id, equipoId, `${j.apellidos} ${j.nombres}`, insc?.dorsal)}
                         disabled={!puedeEditar || bloqueado}
@@ -529,7 +555,7 @@ export default function PartidoVivo() {
                 <h3 className="font-bold text-lg text-white leading-tight">{jugadorSeleccionado.jugador.apellidos} {jugadorSeleccionado.jugador.nombres}</h3>
                 <p className="text-xs text-liga-amarillo font-semibold">Periodo {periodoActual}</p>
               </div>
-              <button onClick={() => setJugadorSeleccionado(null)} className="p-2 bg-gray-700 rounded-full hover:bg-gray-600 text-gray-300"><X size={20}/></button>
+              <button onClick={() => setJugadorSeleccionado(null)} className="p-2 bg-gray-700 rounded-full hover:bg-gray-600 text-gray-300"><X size={20} /></button>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <button onClick={() => registrarEvento('gol')} className="bg-green-600 hover:bg-green-500 text-white p-4 rounded-xl font-black text-lg shadow-lg flex flex-col items-center gap-1 transition-colors">
@@ -545,7 +571,7 @@ export default function PartidoVivo() {
                 <span className="text-2xl">⚠️</span> Falta
               </button>
             </div>
-            
+
             <div className="mt-5 text-xs space-y-2 max-h-32 overflow-y-auto bg-gray-900 p-3 rounded-xl border border-gray-700">
               <p className="font-bold text-gray-400 uppercase">Historial:</p>
               {eventos.filter(e => e.jugador_id === jugadorSeleccionado.jugador.id).map(e => (
